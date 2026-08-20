@@ -1,0 +1,10 @@
+{
+  "name": "profiles-manager",
+  "version": "1.0.0",
+  "description": "Manage gentle-ai sdd models profiles",
+  "main": "index.ts",
+  "type": "module",
+  "keywords": [
+    "pi-agent-extension"
+  ]
+}
