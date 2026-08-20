@@ -9,10 +9,69 @@ const GENTLE_DIR = path.join(os.homedir(), ".pi", "gentle-ai");
 const MODELS_PATH = path.join(GENTLE_DIR, "models.json");
 const PROFILES_PATH = path.join(GENTLE_DIR, "sdd-profiles-manager.json");
 
+type AgentConfig = {
+  model?: string;
+  thinking?: string;
+  [key: string]: unknown;
+};
+
 interface Profile {
   name: string;
-  orchestrator: { model: string; thinking: string };
-  agents: Record<string, { model: string; thinking: string }>;
+  orchestrator: AgentConfig;
+  agents: Record<string, AgentConfig>;
+}
+
+const ORCHESTRATOR_NAME = "gentle-orchestrator";
+const DEFAULT_AGENT_CONFIG: AgentConfig = { model: "", thinking: "" };
+
+async function discoverAgentNames(cwd: string): Promise<string[]> {
+  const agentHome = process.env.GENTLE_PI_AGENT_HOME || path.join(os.homedir(), ".pi", "agent");
+  const directories = [
+    path.join(agentHome, "agents"),
+    path.join(agentHome, "subagents"),
+    path.join(os.homedir(), ".agents"),
+    path.join(cwd, ".agents"),
+    path.join(cwd, ".pi", "agents"),
+    path.join(cwd, ".pi", "subagents"),
+  ];
+  const names = new Set<string>();
+
+  for (const directory of directories) {
+    try {
+      const entries = await fs.readdir(directory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (entry.isFile() && entry.name.endsWith(".md")) {
+          names.add(entry.name.slice(0, -3));
+        }
+      }
+    } catch (error: any) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+
+  return [...names].filter((name) => name !== ORCHESTRATOR_NAME).sort();
+}
+
+async function allAgentNames(cwd: string, ...configs: Array<Record<string, AgentConfig> | undefined>): Promise<string[]> {
+  const names = new Set(await discoverAgentNames(cwd));
+  for (const config of configs) {
+    for (const name of Object.keys(config || {})) {
+      if (name !== ORCHESTRATOR_NAME) names.add(name);
+    }
+  }
+  return [...names].sort();
+}
+
+async function profileFromModels(cwd: string, name: string, models: Record<string, AgentConfig>): Promise<Profile> {
+  const agents: Record<string, AgentConfig> = {};
+  for (const key of await allAgentNames(cwd, models)) {
+    agents[key] = models[key] || { ...DEFAULT_AGENT_CONFIG };
+  }
+  return {
+    name,
+    orchestrator: models[ORCHESTRATOR_NAME] || { ...DEFAULT_AGENT_CONFIG },
+    agents,
+  };
 }
 
 async function readJson(fp: string): Promise<any> {
@@ -75,15 +134,8 @@ export default function (pi: ExtensionAPI) {
         }
 
         const models = await readJson(MODELS_PATH);
-        const orchestrator = models["gentle-orchestrator"] || { model: "", thinking: "" };
-        const agents: any = {};
-        for (const key of Object.keys(models)) {
-          if (key !== "gentle-orchestrator") {
-            agents[key] = models[key];
-          }
-        }
         const profiles = await readJson(PROFILES_PATH);
-        profiles[profileName] = { name: profileName, orchestrator, agents };
+        profiles[profileName] = await profileFromModels(ctx.cwd, profileName, models);
         await writeJson(PROFILES_PATH, profiles);
         ctx.ui.notify(`Profile '${profileName}' saved`, "success");
         return;
@@ -135,14 +187,7 @@ export default function (pi: ExtensionAPI) {
           const newName = await promptInput(ctx, "Enter new profile name:");
           if (newName) {
             const models = await readJson(MODELS_PATH);
-            const orchestrator = models["gentle-orchestrator"] || { model: "", thinking: "" };
-            const agents: any = {};
-            for (const key of Object.keys(models)) {
-              if (key !== "gentle-orchestrator") {
-                agents[key] = models[key];
-              }
-            }
-            profiles[newName] = { name: newName, orchestrator, agents };
+            profiles[newName] = await profileFromModels(ctx.cwd, newName, models);
             await writeJson(PROFILES_PATH, profiles);
             ctx.ui.notify(`Created profile '${newName}'`, "success");
           }
@@ -188,14 +233,13 @@ export default function (pi: ExtensionAPI) {
 
           if (selectedAction === "activate") {
             const profile = profiles[selectedProfile];
-            const newModels: any = {};
+            const currentModels = await readJson(MODELS_PATH);
+            const newModels: Record<string, AgentConfig> = {};
             if (profile.orchestrator) {
-              newModels["gentle-orchestrator"] = profile.orchestrator;
+              newModels[ORCHESTRATOR_NAME] = profile.orchestrator;
             }
-            if (profile.agents) {
-              for (const key of Object.keys(profile.agents)) {
-                newModels[key] = profile.agents[key];
-              }
+            for (const key of await allAgentNames(ctx.cwd, currentModels, profile.agents)) {
+              newModels[key] = profile.agents?.[key] || currentModels[key] || { ...DEFAULT_AGENT_CONFIG };
             }
             await writeJson(MODELS_PATH, newModels);
             ctx.ui.notify(`Activated profile '${selectedProfile}'. Run /reload if needed.`, "success");
@@ -212,10 +256,17 @@ export default function (pi: ExtensionAPI) {
           if (selectedAction === "edit") {
             // Edit Flow
             while (true) {
-              const currentProfile = profiles[selectedProfile];
-              const agentKeys = ["orchestrator", ...Object.keys(currentProfile.agents || {})];
-              
-              const editItems = agentKeys.map(k => {
+                  const currentProfile = profiles[selectedProfile];
+                  const currentModels = await readJson(MODELS_PATH);
+                  const agentNames = await allAgentNames(ctx.cwd, currentModels, currentProfile.agents);
+                  if (!currentProfile.agents) currentProfile.agents = {};
+                  for (const name of agentNames) {
+                    currentProfile.agents[name] = currentProfile.agents[name] || currentModels[name] || { ...DEFAULT_AGENT_CONFIG };
+                  }
+                  await writeJson(PROFILES_PATH, profiles);
+                  const agentKeys = ["orchestrator", ...agentNames];
+
+                  const editItems = agentKeys.map(k => {
                 const conf = k === "orchestrator" ? currentProfile.orchestrator : currentProfile.agents[k];
                 return {
                   value: k,
@@ -259,7 +310,8 @@ export default function (pi: ExtensionAPI) {
                 if (!newName) continue;
                 agentName = newName;
                 if (!currentProfile.agents) currentProfile.agents = {};
-                currentProfile.agents[agentName] = { model: "omni/antigravity/gemini-3.6-flash-low", thinking: "low" };
+                const currentModels = await readJson(MODELS_PATH);
+                currentProfile.agents[agentName] = currentModels[agentName] || { ...DEFAULT_AGENT_CONFIG };
                 await writeJson(PROFILES_PATH, profiles);
               }
 
