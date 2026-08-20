@@ -1,10 +1,20 @@
 {
-  "name": "profiles-manager",
-  "version": "1.0.0",
-  "description": "Manage gentle-ai sdd models profiles",
+  "name": "pi-profiles-manager",
+  "version": "1.0.1",
+  "description": "Interactive SDD model profile management built natively for the Pi Coding Agent.",
   "main": "index.ts",
   "type": "module",
   "keywords": [
-    "pi-agent-extension"
-  ]
+    "pi-agent-extension",
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": ["index.ts"]
+  },
+  "author": "javinnav",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/javinnav/pi-profiles-manager.git"
+  }
 }
