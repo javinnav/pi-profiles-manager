@@ -1,5 +1,7 @@
 # pi-profiles-manager 🚀
 
+[![npm version](https://badge.fury.io/js/pi-profiles-manager.svg)](https://badge.fury.io/js/pi-profiles-manager)
+
 Interactive SDD model profile management built natively for the [Pi Coding Agent](https://github.com/earendil-works/pi-mono).
 
 Manage your Gentle AI `models.json` configurations dynamically from a beautiful Terminal User Interface (TUI) without ever leaving your session.
@@ -57,23 +59,23 @@ Edit Profile 'antigravity'
 
 ## 🛠 Installation
 
-Clone this repository directly into your Pi extensions directory:
+Because `pi-profiles-manager` is an officially published Pi Package, you can install it seamlessly using the native Pi package manager:
 
 ```bash
-git clone https://github.com/javinnav/pi-profiles-manager.git ~/.pi/agent/extensions/profiles-manager
+pi install npm:pi-profiles-manager
 ```
 
-Apply the changes immediately by reloading the active session:
+*Note: Once installed, any running Pi sessions should automatically pick it up, or you can run `/reload` in an active session.*
 
-```text
-/reload
+### Manual Installation (Development)
+If you wish to modify the code yourself, clone this repository directly into your Pi extensions directory:
+```bash
+git clone https://github.com/javinnav/pi-profiles-manager.git ~/.pi/agent/extensions/profiles-manager
 ```
 
 ---
 
 ## 🚀 Usage
-
-*Ensure the active Pi Session recognizes the newly linked extension context.*
 
 Open the Profiles Manager by triggering its slash command:
 
