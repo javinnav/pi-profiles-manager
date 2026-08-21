@@ -74,6 +74,21 @@ async function profileFromModels(cwd: string, name: string, models: Record<strin
   };
 }
 
+function sameAgentConfig(left: AgentConfig | undefined, right: AgentConfig | undefined): boolean {
+  return (left?.model || "") === (right?.model || "")
+    && (left?.thinking || "") === (right?.thinking || "");
+}
+
+async function profileIsActive(cwd: string, profile: Profile, models: Record<string, AgentConfig>): Promise<boolean> {
+  if (!sameAgentConfig(profile.orchestrator, models[ORCHESTRATOR_NAME])) return false;
+  for (const name of await allAgentNames(cwd, models, profile.agents)) {
+    const activeConfig = models[name] || DEFAULT_AGENT_CONFIG;
+    const profileConfig = profile.agents?.[name] || activeConfig;
+    if (!sameAgentConfig(profileConfig, activeConfig)) return false;
+  }
+  return true;
+}
+
 async function readJson(fp: string): Promise<any> {
   try {
     const data = await fs.readFile(fp, "utf-8");
@@ -142,17 +157,25 @@ export default function (pi: ExtensionAPI) {
       }
 
       while (true) {
-        let profiles: Record<string, Profile> = await readJson(PROFILES_PATH);
-        const profileNames = Object.keys(profiles);
-        
-        const items = [
-          { value: "__CREATE__", label: "✨ Create New Profile from Current Config", description: "Saves models.json into a new profile" },
-          ...profileNames.map((name) => ({
-            value: name,
-            label: name,
-            description: `Orchestrator: ${profiles[name].orchestrator?.model || "none"}`,
-          }))
-        ];
+            let profiles: Record<string, Profile> = await readJson(PROFILES_PATH);
+            const models = await readJson(MODELS_PATH);
+            const profileNames = Object.keys(profiles);
+            const activeProfiles = new Set(
+              (await Promise.all(profileNames.map(async (name) =>
+                (await profileIsActive(ctx.cwd, profiles[name], models)) ? name : null
+              ))).filter((name): name is string => name !== null),
+            );
+
+            const items = [
+              { value: "__CREATE__", label: "✨ Create New Profile from Current Config", description: "Saves models.json into a new profile" },
+              ...profileNames.map((name) => ({
+                value: name,
+                label: activeProfiles.has(name) ? `✓ ${name}` : name,
+                description: activeProfiles.has(name)
+                  ? `Active profile · Orchestrator: ${profiles[name].orchestrator?.model || "none"}`
+                  : `Orchestrator: ${profiles[name].orchestrator?.model || "none"}`,
+              }))
+            ];
 
         // Pick Profile
         const selectedProfile = await ctx.ui.custom<string | null>((tui, theme, _kb, done) => {
