@@ -9,12 +9,18 @@
     "pi-package"
   ],
   "pi": {
-    "extensions": ["index.ts"]
+    "extensions": [
+      "index.ts"
+    ]
   },
   "author": "javinnav",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/javinnav/pi-profiles-manager.git"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.11"
   }
 }
