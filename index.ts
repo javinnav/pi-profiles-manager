@@ -614,7 +614,7 @@ export default function (pi: ExtensionAPI) {
 
   // --- Shortcut Registration ---
   let activeProfile: string | undefined;
-  const shortcut = DEFAULT_SHORTCUT;
+  const shortcut = "ctrl+alt+p";
   const shortcutHandler = {
     description: "Cycle agent profile",
     async handler(ctx: any) {
