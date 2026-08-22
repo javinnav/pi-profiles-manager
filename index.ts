@@ -613,6 +613,7 @@ export default function (pi: ExtensionAPI) {
   });
 
   // --- Shortcut Registration ---
+  let activeProfile: string | undefined;
   const shortcut = DEFAULT_SHORTCUT;
   const shortcutHandler = {
     description: "Cycle agent profile",
@@ -622,13 +623,13 @@ export default function (pi: ExtensionAPI) {
         const names = Object.keys(profiles);
         if (!names.length)
           return ctx.ui.notify("No profiles configured", "error");
-        const current = ctx.ui.status?.[STATUS_KEY];
-        const idx = names.indexOf(current ?? "");
+        const idx = names.indexOf(activeProfile ?? "");
         const next = names[(idx + 1 + names.length) % names.length];
         const profile = profiles[next];
         if (profile?.orchestrator?.model) {
           await applyMainModel(pi, ctx, profile.orchestrator.model);
         }
+        activeProfile = next;
         ctx.ui.setStatus(STATUS_KEY, next);
         ctx.ui.notify(`Switched to profile: ${next}`, "info");
       } catch (error: unknown) {
