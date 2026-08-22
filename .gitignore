@@ -1,3 +1,5 @@
 node_modules/
 .DS_Store
 *.log
+# Local Pi runtime state
+.atl/
