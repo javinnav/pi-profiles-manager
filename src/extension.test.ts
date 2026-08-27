@@ -8,6 +8,7 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
 
 const tuiState = vi.hoisted(() => ({
   lists: [] as any[],
+  inputs: [] as any[],
 }));
 
 vi.mock("@earendil-works/pi-tui", () => ({
@@ -22,6 +23,7 @@ vi.mock("@earendil-works/pi-tui", () => ({
   Input: class {
     focused = false;
     private value = "";
+    constructor() { tuiState.inputs.push(this); }
     setValue(value: string) { this.value = value; }
     getValue() { return this.value; }
     handleInput(data: string) { this.value += data; }
@@ -250,6 +252,131 @@ describe("extension", () => {
       "tui.select.confirm",
       "tui.select.cancel",
     ]);
+  });
+
+  it("imports and exports profiles via single versioned string, avoiding name collisions and rejecting invalid payloads", async () => {
+    tuiState.lists = [];
+    tuiState.inputs = [];
+    const pi = mockPi();
+    profilesExtension(pi as any);
+    const handler = (pi.registerCommand as any).mock.calls.find(
+      (call: any[]) => call[0] === "profiles",
+    )[1].handler;
+
+    const base64MalBase64 = "piprofile:1:not_json_base64_";
+    const noPrefix = "somestring";
+
+    // Unsupported version
+    const payloadUnsupported = {
+      _type: "piprofile",
+      version: 2,
+      profile: {
+        name: "wrong",
+        orchestrator: { model: "exported/model", thinking: "high" },
+        agents: {}
+      }
+    };
+    const strUnsupported = "piprofile:1:" + Buffer.from(JSON.stringify(payloadUnsupported)).toString("base64");
+
+    const profileObj = {
+      name: "work",
+      orchestrator: { model: "exported/model", thinking: "high" },
+      agents: { "sdd-apply": { model: "exported/tool", thinking: "medium" } },
+    };
+    const payloadValid = {
+      _type: "piprofile",
+      version: 1,
+      profile: profileObj
+    };
+    const base64Valid = "piprofile:1:" + Buffer.from(JSON.stringify(payloadValid)).toString("base64");
+
+    const custom = vi
+      .fn()
+      // 1. main menu (export flow)
+      .mockResolvedValueOnce("work")
+      // 2. action menu
+      .mockResolvedValueOnce("export")
+      // 3. promptInput for export string
+      .mockImplementationOnce(async (factory) => {
+        // execute it to hit the new Input() creation
+        factory(
+          null, // tui
+          { fg: (_c: any, s: any) => s, bold: (s: any) => s },
+          null,
+          (_val: any) => {}
+        );
+        return null;
+      })
+      // 4. action menu loops again, we return null to go back
+      .mockResolvedValueOnce(null)
+
+      // 5. main menu -> __IMPORT__
+      .mockResolvedValueOnce("__IMPORT__")
+      // 6. promptInput for import missing prefix
+      .mockImplementationOnce(async () => noPrefix)
+
+      // 7. main menu -> __IMPORT__
+      .mockResolvedValueOnce("__IMPORT__")
+      // 8. promptInput for import malformed string
+      .mockImplementationOnce(async () => base64MalBase64)
+
+      // 9. main menu -> __IMPORT__
+      .mockResolvedValueOnce("__IMPORT__")
+      // 10. promptInput for unsupported version
+      .mockImplementationOnce(async () => strUnsupported)
+
+      // 11. main menu -> __IMPORT__
+      .mockResolvedValueOnce("__IMPORT__")
+      // 12. promptInput for valid string
+      .mockImplementationOnce(async () => base64Valid)
+
+      // 13. Exit profile menu
+      .mockResolvedValueOnce(null);
+
+    const ctx = {
+      modelRegistry: { find: vi.fn(), getAvailable: vi.fn(async () => []) },
+      ui: { custom, notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    const fs = await import("node:fs/promises");
+    const writeFn = vi.mocked(fs.writeFile);
+    writeFn.mockClear();
+
+    await handler([], ctx);
+
+    // Verify EXPORT: exact round trip format
+    expect(tuiState.inputs.length).toBeGreaterThan(0);
+    const exportedStr = tuiState.inputs[0].getValue();
+    expect(exportedStr.startsWith("piprofile:1:")).toBe(true);
+    const decoded = JSON.parse(Buffer.from(exportedStr.slice("piprofile:1:".length), "base64").toString("utf-8"));
+    expect(decoded.version).toBe(1);
+    expect(decoded.profile.name).toBe("work");
+    expect(decoded.profile.orchestrator.model).toBe("provider/model"); // mock fs has this
+
+    // Verify ALL INVALID INPUTS caused NO write and threw correct errors
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("String must start with piprofile:1:"),
+      "error",
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Unexpected token"), // from JSON parse fail
+      "error",
+    );
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      expect.stringContaining("Unsupported profile version: 2"),
+      "error",
+    );
+
+    // There should be exactly ONE write for the valid import
+    expect(writeFn).toHaveBeenCalledTimes(1);
+
+    // Verify valid collision was saved with -imported
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Imported profile 'work-imported'", "info");
+    const writeCall = writeFn.mock.calls[0];
+    const savedData = JSON.parse(writeCall![1] as string);
+    expect(savedData["work-imported"]).toBeDefined();
+    expect(savedData["work-imported"].name).toBe("work-imported");
+    expect(savedData["work-imported"].orchestrator.model).toBe("exported/model");
   });
 
   it("session_start auto-activates the favorite profile", async () => {
