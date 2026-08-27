@@ -355,7 +355,7 @@ export default function (pi: ExtensionAPI) {
                 "info",
               );
             }
-            break;
+            return;
           }
 
           if (selectedAction === "delete") {
