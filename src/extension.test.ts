@@ -3,14 +3,37 @@ import { describe, expect, it, vi } from "vitest";
 // Mock the Pi SDK before importing extension
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   getAgentDir: () => "/tmp/mock-agent",
+  DynamicBorder: class { constructor(..._args: any[]) {} },
+}));
+
+const tuiState = vi.hoisted(() => ({
+  lists: [] as any[],
 }));
 
 vi.mock("@earendil-works/pi-tui", () => ({
-  Container: class {},
-  DynamicBorder: class {},
-  Input: class {},
-  SelectList: class {},
-  Text: class {},
+  Container: class {
+    children: any[] = [];
+    addChild(child: any) { this.children.push(child); }
+    clear() { this.children = []; }
+    render() { return []; }
+    invalidate() {}
+  },
+  DynamicBorder: class { constructor(..._args: any[]) {} },
+  Input: class {
+    focused = false;
+    private value = "";
+    setValue(value: string) { this.value = value; }
+    getValue() { return this.value; }
+    handleInput(data: string) { this.value += data; }
+  },
+  SelectList: class {
+    onSelect: ((item: any) => void) | undefined;
+    onCancel: (() => void) | undefined;
+    inputs: string[] = [];
+    constructor(public items: any[]) { tuiState.lists.push(this); }
+    handleInput(data: string) { this.inputs.push(data); }
+  },
+  Text: class { constructor(..._args: any[]) {} },
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -166,6 +189,67 @@ describe("extension", () => {
       "Activated profile 'empty' (no orchestrator model).",
       "info",
     );
+  });
+
+  it("searches all available model labels by case-insensitive substring", async () => {
+    tuiState.lists = [];
+    const pi = mockPi();
+    profilesExtension(pi as any);
+    const handler = (pi.registerCommand as any).mock.calls.find(
+      (call: any[]) => call[0] === "profiles",
+    )[1].handler;
+    const custom = vi
+      .fn()
+      .mockResolvedValueOnce("work")
+      .mockResolvedValueOnce("edit")
+      .mockResolvedValueOnce("orchestrator")
+      .mockResolvedValueOnce("model")
+      .mockImplementationOnce(async (factory: any) => {
+        const view = factory(
+          { requestRender: vi.fn() },
+          { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+          { matches: (data: string, action: string) => data === action },
+          () => {},
+        );
+        view.handleInput("MATCH");
+        view.handleInput("tui.select.down");
+        view.handleInput("tui.select.confirm");
+        view.handleInput("tui.select.cancel");
+        return null;
+      })
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce("back")
+      .mockResolvedValueOnce(null);
+    const ctx = {
+      modelRegistry: {
+        find: vi.fn(),
+        getAvailable: vi.fn(async () => [
+          { provider: "OpenAI", id: "gpt-4o" },
+          { provider: "Acme", id: "UltraMatch" },
+          { provider: "cohere", id: "command-r" },
+        ]),
+      },
+      ui: { custom, notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler([], ctx);
+
+    expect(ctx.modelRegistry.getAvailable).toHaveBeenCalledOnce();
+    expect(tuiState.lists[0].items.map((item: any) => item.label)).toEqual([
+      "✎ Type custom model identifier...",
+      "Acme/UltraMatch",
+      "cohere/command-r",
+      "OpenAI/gpt-4o",
+    ]);
+    expect(tuiState.lists.at(-1).items.map((item: any) => item.label)).toEqual([
+      "✎ Type custom model identifier...",
+      "Acme/UltraMatch",
+    ]);
+    expect(tuiState.lists.at(-1).inputs).toEqual([
+      "tui.select.down",
+      "tui.select.confirm",
+      "tui.select.cancel",
+    ]);
   });
 
   it("session_start auto-activates the favorite profile", async () => {
