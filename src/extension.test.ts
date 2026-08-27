@@ -5,7 +5,42 @@ vi.mock("@earendil-works/pi-coding-agent", () => ({
   getAgentDir: () => "/tmp/mock-agent",
 }));
 
+vi.mock("@earendil-works/pi-tui", () => ({
+  Container: class {},
+  DynamicBorder: class {},
+  Input: class {},
+  SelectList: class {},
+  Text: class {},
+}));
+
+vi.mock("node:fs/promises", () => ({
+  mkdir: vi.fn(),
+  readFile: vi.fn(async (filePath: string) => {
+    if (filePath.endsWith("sdd-profiles-manager.json")) {
+      return JSON.stringify({
+        work: {
+          name: "work",
+          orchestrator: { model: "provider/model", thinking: "medium" },
+          agents: {},
+        },
+        empty: {
+          name: "empty",
+          orchestrator: { model: "", thinking: "medium" },
+          agents: {},
+        },
+      });
+    }
+    if (filePath.endsWith("models.json") || filePath.endsWith("subagents.json")) {
+      return "{}";
+    }
+    const error = Object.assign(new Error("not found"), { code: "ENOENT" });
+    throw error;
+  }),
+  writeFile: vi.fn(),
+}));
+
 import extension from "./extension.js";
+import profilesExtension from "../index.js";
 import type { PiLike } from "./types.js";
 
 function mockPi(overrides?: Record<string, any>): PiLike {
@@ -78,5 +113,47 @@ describe("extension", () => {
 
     await shutdownHandler({}, ctx);
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", undefined);
+  });
+
+  it("ends the profiles flow after activating a profile", async () => {
+    const pi = mockPi();
+    profilesExtension(pi as any);
+    const handler = (pi.registerCommand as any).mock.calls.find(
+      (call: any[]) => call[0] === "profiles",
+    )[1].handler;
+    const custom = vi.fn()
+      .mockResolvedValueOnce("work")
+      .mockResolvedValueOnce("activate");
+    const ctx = {
+      modelRegistry: { find: vi.fn(() => ({ id: "model" })) },
+      ui: { custom, notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler([], ctx);
+
+    expect(custom).toHaveBeenCalledTimes(2);
+  });
+
+  it("ends the profiles flow after activating a profile without a model", async () => {
+    const pi = mockPi();
+    profilesExtension(pi as any);
+    const handler = (pi.registerCommand as any).mock.calls.find(
+      (call: any[]) => call[0] === "profiles",
+    )[1].handler;
+    const custom = vi.fn()
+      .mockResolvedValueOnce("empty")
+      .mockResolvedValueOnce("activate");
+    const ctx = {
+      modelRegistry: { find: vi.fn() },
+      ui: { custom, notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler([], ctx);
+
+    expect(custom).toHaveBeenCalledTimes(2);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Activated profile 'empty' (no orchestrator model).",
+      "info",
+    );
   });
 });
