@@ -21,6 +21,7 @@ interface Profile {
   name: string;
   orchestrator: { model: string; thinking: string };
   agents: Record<string, { model: string; thinking: string }>;
+  favorite?: boolean;
 }
 
 async function readJson(fp: string): Promise<any> {
@@ -167,6 +168,8 @@ async function promptInput(
 }
 
 export default function (pi: ExtensionAPI) {
+  let activeProfile: string | undefined;
+
   pi.registerCommand("profiles", {
     description: "Manage SDD model profiles",
     handler: async (args, ctx) => {
@@ -211,7 +214,10 @@ export default function (pi: ExtensionAPI) {
           },
           ...profileNames.map((name) => ({
             value: name,
-            label: name,
+            label:
+              name +
+              (name === activeProfile ? " [▶ Active]" : "") +
+              (profiles[name].favorite ? " [★ Favorite]" : ""),
             description: `Orchestrator: ${profiles[name].orchestrator?.model || "none"}`,
           })),
         ];
@@ -297,6 +303,11 @@ export default function (pi: ExtensionAPI) {
               description: "Apply this profile and switch main model",
             },
             {
+              value: "favorite",
+              label: "★ Set as Favorite",
+              description: "Mark this profile as the session default",
+            },
+            {
               value: "edit",
               label: "✎ Edit",
               description: "Modify agents in this profile",
@@ -373,7 +384,18 @@ export default function (pi: ExtensionAPI) {
                 "info",
               );
             }
+            activeProfile = selectedProfile;
+            ctx.ui.setStatus(STATUS_KEY, selectedProfile);
             return;
+          }
+
+          if (selectedAction === "favorite") {
+            for (const key of Object.keys(profiles)) {
+              profiles[key].favorite = key === selectedProfile;
+            }
+            await writeJson(PROFILES_PATH, profiles);
+            ctx.ui.notify(`Set '${selectedProfile}' as favorite.`, "info");
+            break;
           }
 
           if (selectedAction === "delete") {
@@ -631,7 +653,6 @@ export default function (pi: ExtensionAPI) {
   });
 
   // --- Shortcut Registration ---
-  let activeProfile: string | undefined;
   const shortcutHandler = {
     description: "Cycle agent profile",
     async handler(ctx: any) {
@@ -668,13 +689,37 @@ export default function (pi: ExtensionAPI) {
   }
 
   // --- Lifecycle Hooks ---
-  pi.on("session_start", async (_event: unknown, _ctx: any) => {
+  pi.on("session_start", async (_event: unknown, ctx: any) => {
     try {
       const profiles: Record<string, Profile> = await readJson(PROFILES_PATH);
       const names = Object.keys(profiles);
       if (!names.length) return;
-      // Auto-apply first profile if configured as default
-      // (future: read defaultProfile from config)
+
+      const favoriteName = Object.keys(profiles).find(
+        (n) => profiles[n].favorite,
+      );
+      if (favoriteName) {
+        const profile = profiles[favoriteName];
+        await applyProfileModels(profile);
+        if (profile.orchestrator?.model) {
+          await applyMainModel(pi, ctx, profile.orchestrator.model);
+        }
+        activeProfile = favoriteName;
+        ctx.ui.setStatus(STATUS_KEY, favoriteName);
+      } else {
+        // Fallback: Infer the active profile from the current models.json
+        const currentModels = await readJson(MODELS_PATH);
+        const currentOrch = currentModels["gentle-orchestrator"]?.model;
+        if (currentOrch) {
+          const matchedName = names.find(
+            (n) => profiles[n].orchestrator?.model === currentOrch,
+          );
+          if (matchedName) {
+            activeProfile = matchedName;
+            ctx.ui.setStatus(STATUS_KEY, matchedName);
+          }
+        }
+      }
     } catch {
       // Graceful degradation
     }

@@ -28,6 +28,12 @@ vi.mock("node:fs/promises", () => ({
           orchestrator: { model: "", thinking: "medium" },
           agents: {},
         },
+        fav: {
+          name: "fav",
+          orchestrator: { model: "favprovider/favmodel", thinking: "high" },
+          agents: {},
+          favorite: true
+        },
       });
     }
     if (
@@ -160,5 +166,29 @@ describe("extension", () => {
       "Activated profile 'empty' (no orchestrator model).",
       "info",
     );
+  });
+
+  it("session_start auto-activates the favorite profile", async () => {
+    const pi = mockPi();
+    profilesExtension(pi as any);
+
+    const onCalls = (pi.on as any).mock.calls;
+    const startHandler = onCalls.find(
+      (c: any[]) => c[0] === "session_start",
+    )?.[1];
+
+    expect(startHandler).toBeDefined();
+
+    const ctx = {
+      modelRegistry: { find: vi.fn(() => ({ id: "favmodel" })) },
+      ui: { setStatus: vi.fn(), notify: vi.fn() },
+    };
+
+    await startHandler({}, ctx);
+
+    // Verify applyMainModel was called with favmodel
+    expect(pi.setModel).toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Switched to favprovider/favmodel", "success");
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "fav");
   });
 });
