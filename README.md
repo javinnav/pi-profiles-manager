@@ -4,7 +4,7 @@
 
 Interactive SDD model profile management built natively for the [Pi Coding Agent](https://github.com/earendil-works/pi-mono).
 
-Manage your Gentle AI `models.json` configurations dynamically from a beautiful Terminal User Interface (TUI) without ever leaving your session.
+Manage your Gentle AI configurations dynamically from a beautiful Terminal User Interface (TUI) without ever leaving your session.
 
 ---
 
@@ -15,35 +15,30 @@ Manage your Gentle AI `models.json` configurations dynamically from a beautiful 
 Manage all your SDD (Spec-Driven Development) profiles via a rich interface:
 
 - **Create:** Read your current `models.json` setup and save it as a new profile instantly.
-- **Activate:** Apply a saved profile into the global runtime config. Changes affect the executing session immediately with no restarts required.
+- **Activate:** Apply a saved profile into the global runtime config. Changes affect the executing session immediately.
 - **Edit Agent Nodes:** Individually adjust `model` strings and `thinking` tiers (`low`, `medium`, `high`, `xhigh`, `max`) for any agent (`sdd-*`, `jd-*`, `review-*`, etc.).
-- **Scaffold Empty Agents:** Add specific overrides for single agents right from the UI.
-- **Delete:** Remove outdated tiers and profiles to keep your workspace tidy.
+- **Delete:** Remove outdated profiles to keep your workspace tidy.
 
-### 2. Keyboard Shortcuts
+### 2. Live Synchronization
 
-- **`ctrl+tab`** — Cycle through configured profiles instantly. Both model and thinking level apply live.
-- **`/profiles next`** — Cycle to the next profile via slash command.
-- **`/profiles use <name>`** — Activate a specific profile by name.
-- **`/profiles off`** — Deactivate and restore your original session baseline.
+- **Subagents Integration:** When activating a profile, `pi-profiles-manager` now correctly synchronizes model routes directly into `subagents.json`, guaranteeing flawless background agent execution.
+- **Main Model Updates:** Instantly applies the chosen orchestrator model to your active session.
 
-### 3. Session Persistence
+### 3. Active and Favorite Profiles
 
-- Active profile survives session restarts and reloads.
-- Automatically restores your last active profile on `session_start`.
-- Set a `defaultProfile` in config to auto-apply on new sessions.
+- **Visual Indicators:** The UI explicitly flags your active profile with `[▶ Active]` and your session default with `[★ Favorite]`.
+- **Status Bar Integration:** Instantly see your currently activated profile in the Pi status bar.
+- **Auto-Activation:** Mark a profile as "Favorite" via the UI menu. On `session_start`, `pi-profiles-manager` will automatically find and activate your favorite profile.
+- **Fallback Inference:** If no favorite profile is configured, new sessions intelligently infer the active profile name by comparing your active `models.json` orchestrator to your saved profiles.
 
-### 4. Live Effort Application
+### 4. Keyboard Shortcuts
 
-- `setThinkingLevel()` is called on activation — effort takes effect immediately.
-- Baseline model + thinking level captured on first activation for safe rollback.
-- `"inherit"` effort means "don't change the current thinking level".
+- **`ctrl+shift+p`** — Cycle through configured profiles instantly without opening the UI. Both model and thinking levels apply live.
 
 ### 5. Native Pi Integration
 
 - Fully built on top of `@earendil-works/pi-tui`.
 - Works flawlessly with overlay navigation, meaning your terminal output isn't erased when interacting with profiles.
-- Status bar indicator shows the active profile.
 
 ---
 
@@ -53,29 +48,20 @@ Manage all your SDD (Spec-Driven Development) profiles via a rich interface:
 Profiles Manager
 ──────────────────────────────────────────────────
 > ✨ Create New Profile from Current Config
-  FREE
-  antigravity
-  deus
+  work [▶ Active] [★ Favorite]
+  low-tier
 
 ↑↓ navigate • enter select • esc close
 ```
 
 ```text
-Action for 'antigravity'
+Action for 'work'
 ──────────────────────────────────────────────────
-> ▶ Activate         Apply this profile to models.json
+> ▶ Activate         Apply this profile and switch main model
+  ★ Set as Favorite  Mark this profile as the session default
   ✎ Edit             Modify agents in this profile
   ✖ Delete           Remove this profile
   ← Back             Return to profile list
-```
-
-```text
-Edit Profile 'antigravity'
-──────────────────────────────────────────────────
-> orchestrator       omni/antigravity/gemini-pro-agent (medium)
-  jd-fix-agent       omniroute/gemini-flash-low (high)
-  ...
-  ➕ Add Subagent    Add a specific configuration for a subagent
 ```
 
 ---
@@ -107,61 +93,38 @@ git clone https://github.com/javinnav/pi-profiles-manager.git ~/.pi/agent/extens
 | Command | Action |
 | --------- | -------- |
 | `/profiles` | Open the interactive profile manager TUI |
-| `/profiles list` | List all configured profiles |
-| `/profiles status` | Show the active profile (or "none") |
-| `/profiles use <name>` | Activate a specific profile |
-| `/profiles next` | Cycle to the next profile |
-| `/profiles off` | Deactivate and restore baseline |
 | `/profiles save <name>` | Quick-save current config as a profile |
 
 ### Keyboard Shortcuts
 
 | Shortcut | Action |
 |----------|--------|
-| `ctrl+tab` | Cycle through profiles |
+| `ctrl+shift+p` | Cycle to the next configured profile |
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ Configuration File Structure
 
-Profiles are stored in `~/.pi/gentle-ai/sdd-profiles-manager.json` and use a versioned schema:
+Profiles are stored in `~/.pi/gentle-ai/sdd-profiles-manager.json` as a flat JSON record:
 
 ```json
 {
-  "version": 1,
-  "shortcut": "ctrl+tab",
-  "defaultProfile": "review",
-  "cycle": ["review", "fast"],
-  "profiles": {
-    "review": {
-      "order": 0,
-      "orchestrator": {
-        "model": { "provider": "anthropic", "id": "claude-sonnet" },
-        "effort": "high"
-      }
+  "work": {
+    "name": "work",
+    "favorite": true,
+    "orchestrator": {
+      "model": "provider/main-model",
+      "thinking": "high"
     },
-    "fast": {
-      "order": 1,
-      "orchestrator": {
-        "model": { "provider": "openai", "id": "gpt-4.1" },
-        "effort": "low"
+    "agents": {
+      "sdd-apply": {
+        "model": "provider/worker-model",
+        "thinking": "medium"
       }
     }
   }
 }
 ```
-
-| Field | Description |
-| ------- | ------------- |
-| `version` | Schema version (currently `1`) |
-| `shortcut` | Global cycling shortcut (default: `ctrl+tab`) |
-| `defaultProfile` | Profile to auto-apply on new sessions |
-| `cycle` | Optional ordered list for cycling (overrides `order`) |
-| `order` | Integer for profile ordering |
-| `orchestrator` | Model + effort for the parent session |
-| `effort` | One of: `inherit`, `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
-
-**Legacy migration:** Existing unversioned config files are automatically migrated to v2 on first load.
 
 ---
 
