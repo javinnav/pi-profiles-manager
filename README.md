@@ -19,7 +19,12 @@ Manage all your SDD (Spec-Driven Development) profiles via a rich interface:
 - **Edit Agent Nodes:** Individually adjust `model` strings and `thinking` tiers (`low`, `medium`, `high`, `xhigh`, `max`) for any agent (`sdd-*`, `jd-*`, `review-*`, etc.).
 - **Delete:** Remove outdated profiles to keep your workspace tidy.
 
-### 2. Live Synchronization
+### 2. Sharable Export & Import
+
+- **Export:** Safely export a complete profile into a versioned, self-identifying string format (e.g., `piprofile:1:...`).
+- **Import:** Copy-paste shared profile strings to instantly acquire customized agent setups without name collision issues. Invalid strings or unsupported version formats are cleanly handled.
+
+### 3. Live Synchronization
 
 - **Subagents Integration:** When activating a profile, `pi-profiles-manager` now correctly synchronizes model routes directly into `subagents.json`, guaranteeing flawless background agent execution.
 - **Main Model Updates:** Instantly applies the chosen orchestrator model to your active session.
@@ -48,6 +53,7 @@ Manage all your SDD (Spec-Driven Development) profiles via a rich interface:
 Profiles Manager
 ──────────────────────────────────────────────────
 > ✨ Create New Profile from Current Config
+  📥 Import Profile from String
   work [▶ Active] [★ Favorite]
   low-tier
 
@@ -60,6 +66,7 @@ Action for 'work'
 > ▶ Activate         Apply this profile and switch main model
   ★ Set as Favorite  Mark this profile as the session default
   ✎ Edit             Modify agents in this profile
+  📤 Export to String Share this profile as a string
   ✖ Delete           Remove this profile
   ← Back             Return to profile list
 ```

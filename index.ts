@@ -167,6 +167,65 @@ async function promptInput(
   );
 }
 
+function validateProfilePayload(parsed: any): Profile {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+    throw new Error("Payload is not an object");
+  if (parsed._type !== "piprofile") throw new Error("Not a PiProfile payload");
+  if (parsed.version !== 1)
+    throw new Error(`Unsupported profile version: ${parsed.version}`);
+
+  const p = parsed.profile;
+  if (!p || typeof p !== "object" || Array.isArray(p))
+    throw new Error("Missing profile object field");
+  if (typeof p.name !== "string" || !p.name)
+    throw new Error("Invalid or missing profile name");
+
+  if (
+    !p.orchestrator ||
+    typeof p.orchestrator !== "object" ||
+    Array.isArray(p.orchestrator)
+  )
+    throw new Error("Missing or invalid orchestrator");
+  if (typeof p.orchestrator.model !== "string")
+    throw new Error("Orchestrator model must be a string");
+  if (typeof p.orchestrator.thinking !== "string")
+    throw new Error("Orchestrator thinking must be a string");
+
+  const agents: Record<string, { model: string; thinking: string }> = {};
+  if (p.agents !== undefined) {
+    if (
+      typeof p.agents !== "object" ||
+      p.agents === null ||
+      Array.isArray(p.agents)
+    )
+      throw new Error("Agents must be an object");
+    for (const key of Object.keys(p.agents)) {
+      const val = p.agents[key];
+      if (!val || typeof val !== "object" || Array.isArray(val))
+        throw new Error(`Agent '${key}' config is invalid`);
+      if (typeof val.model !== "string")
+        throw new Error(`Agent '${key}' model must be a string`);
+      if (typeof val.thinking !== "string")
+        throw new Error(`Agent '${key}' thinking must be a string`);
+      agents[key] = { model: val.model, thinking: val.thinking };
+    }
+  }
+
+  if (p.favorite !== undefined && typeof p.favorite !== "boolean") {
+    throw new Error("Favorite must be a boolean");
+  }
+
+  return {
+    name: p.name,
+    orchestrator: {
+      model: p.orchestrator.model,
+      thinking: p.orchestrator.thinking,
+    },
+    agents,
+    favorite: p.favorite,
+  };
+}
+
 export default function (pi: ExtensionAPI) {
   let activeProfile: string | undefined;
 
@@ -211,6 +270,11 @@ export default function (pi: ExtensionAPI) {
             value: "__CREATE__",
             label: "✨ Create New Profile from Current Config",
             description: "Saves models.json into a new profile",
+          },
+          {
+            value: "__IMPORT__",
+            label: "📥 Import Profile from String",
+            description: "Load a profile from a shared string",
           },
           ...profileNames.map((name) => ({
             value: name,
@@ -273,6 +337,42 @@ export default function (pi: ExtensionAPI) {
 
         if (!selectedProfile) break;
 
+        if (selectedProfile === "__IMPORT__") {
+          const importStr = await promptInput(
+            ctx,
+            "Paste profile export string:",
+            "",
+          );
+          if (importStr) {
+            try {
+              const str = importStr.trim();
+              const prefix = "piprofile:1:";
+              if (!str.startsWith(prefix)) {
+                throw new Error("String must start with piprofile:1:");
+              }
+              const base64Part = str.slice(prefix.length);
+              const decoded = Buffer.from(base64Part, "base64").toString(
+                "utf-8",
+              );
+              const parsed = JSON.parse(decoded);
+
+              const validProfile = validateProfilePayload(parsed);
+
+              let newName = validProfile.name;
+              while (profiles[newName]) {
+                newName += "-imported";
+              }
+              validProfile.name = newName;
+              profiles[newName] = validProfile;
+              await writeJson(PROFILES_PATH, profiles);
+              ctx.ui.notify(`Imported profile '${newName}'`, "info");
+            } catch (e: any) {
+              ctx.ui.notify(`Invalid profile string: ${e.message}`, "error");
+            }
+          }
+          continue;
+        }
+
         if (selectedProfile === "__CREATE__") {
           const newName = await promptInput(ctx, "Enter new profile name:");
           if (newName) {
@@ -311,6 +411,11 @@ export default function (pi: ExtensionAPI) {
               value: "edit",
               label: "✎ Edit",
               description: "Modify agents in this profile",
+            },
+            {
+              value: "export",
+              label: "📤 Export to String",
+              description: "Share this profile as a string",
             },
             {
               value: "delete",
@@ -396,6 +501,29 @@ export default function (pi: ExtensionAPI) {
             await writeJson(PROFILES_PATH, profiles);
             ctx.ui.notify(`Set '${selectedProfile}' as favorite.`, "info");
             break;
+          }
+
+          if (selectedAction === "export") {
+            const currentProfile = profiles[selectedProfile];
+            const payload = {
+              _type: "piprofile",
+              version: 1,
+              profile: {
+                name: currentProfile.name,
+                orchestrator: currentProfile.orchestrator,
+                agents: currentProfile.agents || {},
+                favorite: currentProfile.favorite,
+              },
+            };
+            const exportedStr =
+              "piprofile:1:" +
+              Buffer.from(JSON.stringify(payload)).toString("base64");
+            await promptInput(
+              ctx,
+              `Copy this export string for '${selectedProfile}' (Esc/Enter to exit):`,
+              exportedStr,
+            );
+            continue; // Keep action menu open
           }
 
           if (selectedAction === "delete") {
@@ -580,121 +708,125 @@ export default function (pi: ExtensionAPI) {
                     ctx.ui.notify(`Removed ${agentName}`, "info");
                     break;
                   }
-                    } else if (pickedMod === "model") {
-                      let availableModels: any[] = [];
-                      try {
-                        availableModels = await ctx.modelRegistry.getAvailable();
-                      } catch {
-                        // The custom identifier option remains available.
-                      }
-                      const modelItems = [
-                        {
-                          value: "__CUSTOM__",
-                          label: "✎ Type custom model identifier...",
-                          description: "Use if model is not in list",
-                        },
-                        ...availableModels
-                          .map((model: any) => `${model.provider}/${model.id}`)
-                          .sort((a: string, b: string) => a.localeCompare(b))
-                          .map((model: string) => ({ value: model, label: model })),
-                      ];
-                      let newModel = await ctx.ui.custom<string | null>(
-                        (tui, theme, kb, done) => {
-                          const container = new Container();
-                          const input = new Input();
-                          input.focused = true;
-                          const createList = (items: typeof modelItems) => {
-                            const list = new SelectList(items, 12, {
-                              selectedPrefix: (t) => theme.fg("accent", t),
-                              selectedText: (t) => theme.fg("accent", t),
-                              description: (t) => theme.fg("muted", t),
-                              scrollInfo: (t) => theme.fg("dim", t),
-                              noMatch: (t) => theme.fg("warning", t),
-                            });
-                            list.onSelect = (item) => done(item.value);
-                            list.onCancel = () => done(null);
-                            return list;
-                          };
-                          let list = createList(modelItems);
-                          const renderContainer = () => {
-                            container.clear();
-                            container.addChild(
-                              new DynamicBorder((s: string) => theme.fg("accent", s)),
-                            );
-                            container.addChild(
-                              new Text(
-                                theme.fg(
-                                  "accent",
-                                  theme.bold(`Select Model for ${agentName}`),
-                                ),
-                                1,
-                                0,
-                              ),
-                            );
-                            container.addChild(
-                              new Text(
-                                theme.fg(
-                                  "dim",
-                                  "Type to search • Enter to select • Esc to cancel",
-                                ),
-                                1,
-                                0,
-                              ),
-                            );
-                            container.addChild(input);
-                            container.addChild(new Text("", 1, 0));
-                            container.addChild(list);
-                            container.addChild(
-                              new DynamicBorder((s: string) => theme.fg("accent", s)),
-                            );
-                          };
-                          renderContainer();
-                          let lastValue = "";
-                          return {
-                            render: (width) => container.render(width),
-                            invalidate: () => container.invalidate(),
-                            handleInput: (data) => {
-                              if (
-                                kb.matches(data, "tui.select.up") ||
-                                kb.matches(data, "tui.select.down") ||
-                                kb.matches(data, "tui.select.confirm") ||
-                                kb.matches(data, "tui.select.cancel")
-                              ) {
-                                list.handleInput(data);
-                              } else {
-                                input.handleInput(data);
-                                const value = input.getValue();
-                                if (value !== lastValue) {
-                                  lastValue = value;
-                                  const query = value.toLowerCase();
-                                  list = createList(
-                                    modelItems.filter(
-                                      (item) =>
-                                        item.value === "__CUSTOM__" ||
-                                        item.label.toLowerCase().includes(query),
-                                    ),
-                                  );
-                                  renderContainer();
-                                }
-                              }
-                              tui.requestRender();
-                            },
-                          };
-                        },
-                        { overlay: true },
-                      );
-                      if (newModel === "__CUSTOM__") {
-                        newModel = await promptInput(
-                          ctx,
-                          `Custom model for ${agentName}:`,
-                          conf.model,
+                } else if (pickedMod === "model") {
+                  let availableModels: any[] = [];
+                  try {
+                    availableModels = await ctx.modelRegistry.getAvailable();
+                  } catch {
+                    // The custom identifier option remains available.
+                  }
+                  const modelItems = [
+                    {
+                      value: "__CUSTOM__",
+                      label: "✎ Type custom model identifier...",
+                      description: "Use if model is not in list",
+                    },
+                    ...availableModels
+                      .map((model: any) => `${model.provider}/${model.id}`)
+                      .sort((a: string, b: string) => a.localeCompare(b))
+                      .map((model: string) => ({ value: model, label: model })),
+                  ];
+                  let newModel = await ctx.ui.custom<string | null>(
+                    (tui, theme, kb, done) => {
+                      const container = new Container();
+                      const input = new Input();
+                      input.focused = true;
+                      const createList = (items: typeof modelItems) => {
+                        const list = new SelectList(items, 12, {
+                          selectedPrefix: (t) => theme.fg("accent", t),
+                          selectedText: (t) => theme.fg("accent", t),
+                          description: (t) => theme.fg("muted", t),
+                          scrollInfo: (t) => theme.fg("dim", t),
+                          noMatch: (t) => theme.fg("warning", t),
+                        });
+                        list.onSelect = (item) => done(item.value);
+                        list.onCancel = () => done(null);
+                        return list;
+                      };
+                      let list = createList(modelItems);
+                      const renderContainer = () => {
+                        container.clear();
+                        container.addChild(
+                          new DynamicBorder((s: string) =>
+                            theme.fg("accent", s),
+                          ),
                         );
-                      }
-                      if (newModel !== null) {
-                        conf.model = newModel;
-                        await writeJson(PROFILES_PATH, profiles);
-                      }
-                    } else if (pickedMod === "thinking") {
+                        container.addChild(
+                          new Text(
+                            theme.fg(
+                              "accent",
+                              theme.bold(`Select Model for ${agentName}`),
+                            ),
+                            1,
+                            0,
+                          ),
+                        );
+                        container.addChild(
+                          new Text(
+                            theme.fg(
+                              "dim",
+                              "Type to search • Enter to select • Esc to cancel",
+                            ),
+                            1,
+                            0,
+                          ),
+                        );
+                        container.addChild(input);
+                        container.addChild(new Text("", 1, 0));
+                        container.addChild(list);
+                        container.addChild(
+                          new DynamicBorder((s: string) =>
+                            theme.fg("accent", s),
+                          ),
+                        );
+                      };
+                      renderContainer();
+                      let lastValue = "";
+                      return {
+                        render: (width) => container.render(width),
+                        invalidate: () => container.invalidate(),
+                        handleInput: (data) => {
+                          if (
+                            kb.matches(data, "tui.select.up") ||
+                            kb.matches(data, "tui.select.down") ||
+                            kb.matches(data, "tui.select.confirm") ||
+                            kb.matches(data, "tui.select.cancel")
+                          ) {
+                            list.handleInput(data);
+                          } else {
+                            input.handleInput(data);
+                            const value = input.getValue();
+                            if (value !== lastValue) {
+                              lastValue = value;
+                              const query = value.toLowerCase();
+                              list = createList(
+                                modelItems.filter(
+                                  (item) =>
+                                    item.value === "__CUSTOM__" ||
+                                    item.label.toLowerCase().includes(query),
+                                ),
+                              );
+                              renderContainer();
+                            }
+                          }
+                          tui.requestRender();
+                        },
+                      };
+                    },
+                    { overlay: true },
+                  );
+                  if (newModel === "__CUSTOM__") {
+                    newModel = await promptInput(
+                      ctx,
+                      `Custom model for ${agentName}:`,
+                      conf.model,
+                    );
+                  }
+                  if (newModel !== null) {
+                    conf.model = newModel;
+                    await writeJson(PROFILES_PATH, profiles);
+                  }
+                } else if (pickedMod === "thinking") {
                   const thinkingLevels = [
                     "low",
                     "medium",
