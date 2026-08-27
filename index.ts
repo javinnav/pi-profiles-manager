@@ -1,13 +1,11 @@
-import { readFileSync } from "node:fs";
 import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import { Container, SelectList, Text, Input } from "@earendil-works/pi-tui";
 import { supportedShortcut } from "./src/config.js";
 import { STATUS_KEY } from "./src/constants.js";
-import { ProfileManager } from "./src/profile-manager.js";
 
 const GENTLE_DIR = path.join(os.homedir(), ".pi", "gentle-ai");
 const MODELS_PATH = path.join(GENTLE_DIR, "models.json");
@@ -717,6 +715,11 @@ export default function (pi: ExtensionAPI) {
                   }
                   const modelItems = [
                     {
+                      value: "back",
+                      label: "← Back",
+                      description: "Return to agent editing",
+                    },
+                    {
                       value: "__CUSTOM__",
                       label: "✎ Type custom model identifier...",
                       description: "Use if model is not in list",
@@ -750,6 +753,7 @@ export default function (pi: ExtensionAPI) {
                           new DynamicBorder((s: string) =>
                             theme.fg("accent", s),
                           ),
+
                         );
                         container.addChild(
                           new Text(
@@ -803,6 +807,7 @@ export default function (pi: ExtensionAPI) {
                                 modelItems.filter(
                                   (item) =>
                                     item.value === "__CUSTOM__" ||
+                                    item.value === "back" ||
                                     item.label.toLowerCase().includes(query),
                                 ),
                               );
@@ -815,6 +820,9 @@ export default function (pi: ExtensionAPI) {
                     },
                     { overlay: true },
                   );
+                  if (newModel === "back") {
+                    continue;
+                  }
                   if (newModel === "__CUSTOM__") {
                     newModel = await promptInput(
                       ctx,

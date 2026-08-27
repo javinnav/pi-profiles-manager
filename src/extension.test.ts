@@ -238,12 +238,14 @@ describe("extension", () => {
 
     expect(ctx.modelRegistry.getAvailable).toHaveBeenCalledOnce();
     expect(tuiState.lists[0].items.map((item: any) => item.label)).toEqual([
+      "← Back",
       "✎ Type custom model identifier...",
       "Acme/UltraMatch",
       "cohere/command-r",
       "OpenAI/gpt-4o",
     ]);
     expect(tuiState.lists.at(-1).items.map((item: any) => item.label)).toEqual([
+      "← Back",
       "✎ Type custom model identifier...",
       "Acme/UltraMatch",
     ]);
