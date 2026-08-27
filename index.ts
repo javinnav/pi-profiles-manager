@@ -580,17 +580,121 @@ export default function (pi: ExtensionAPI) {
                     ctx.ui.notify(`Removed ${agentName}`, "info");
                     break;
                   }
-                } else if (pickedMod === "model") {
-                  const newModel = await promptInput(
-                    ctx,
-                    `Model for ${agentName}:`,
-                    conf.model,
-                  );
-                  if (newModel !== null) {
-                    conf.model = newModel;
-                    await writeJson(PROFILES_PATH, profiles);
-                  }
-                } else if (pickedMod === "thinking") {
+                    } else if (pickedMod === "model") {
+                      let availableModels: any[] = [];
+                      try {
+                        availableModels = await ctx.modelRegistry.getAvailable();
+                      } catch {
+                        // The custom identifier option remains available.
+                      }
+                      const modelItems = [
+                        {
+                          value: "__CUSTOM__",
+                          label: "✎ Type custom model identifier...",
+                          description: "Use if model is not in list",
+                        },
+                        ...availableModels
+                          .map((model: any) => `${model.provider}/${model.id}`)
+                          .sort((a: string, b: string) => a.localeCompare(b))
+                          .map((model: string) => ({ value: model, label: model })),
+                      ];
+                      let newModel = await ctx.ui.custom<string | null>(
+                        (tui, theme, kb, done) => {
+                          const container = new Container();
+                          const input = new Input();
+                          input.focused = true;
+                          const createList = (items: typeof modelItems) => {
+                            const list = new SelectList(items, 12, {
+                              selectedPrefix: (t) => theme.fg("accent", t),
+                              selectedText: (t) => theme.fg("accent", t),
+                              description: (t) => theme.fg("muted", t),
+                              scrollInfo: (t) => theme.fg("dim", t),
+                              noMatch: (t) => theme.fg("warning", t),
+                            });
+                            list.onSelect = (item) => done(item.value);
+                            list.onCancel = () => done(null);
+                            return list;
+                          };
+                          let list = createList(modelItems);
+                          const renderContainer = () => {
+                            container.clear();
+                            container.addChild(
+                              new DynamicBorder((s: string) => theme.fg("accent", s)),
+                            );
+                            container.addChild(
+                              new Text(
+                                theme.fg(
+                                  "accent",
+                                  theme.bold(`Select Model for ${agentName}`),
+                                ),
+                                1,
+                                0,
+                              ),
+                            );
+                            container.addChild(
+                              new Text(
+                                theme.fg(
+                                  "dim",
+                                  "Type to search • Enter to select • Esc to cancel",
+                                ),
+                                1,
+                                0,
+                              ),
+                            );
+                            container.addChild(input);
+                            container.addChild(new Text("", 1, 0));
+                            container.addChild(list);
+                            container.addChild(
+                              new DynamicBorder((s: string) => theme.fg("accent", s)),
+                            );
+                          };
+                          renderContainer();
+                          let lastValue = "";
+                          return {
+                            render: (width) => container.render(width),
+                            invalidate: () => container.invalidate(),
+                            handleInput: (data) => {
+                              if (
+                                kb.matches(data, "tui.select.up") ||
+                                kb.matches(data, "tui.select.down") ||
+                                kb.matches(data, "tui.select.confirm") ||
+                                kb.matches(data, "tui.select.cancel")
+                              ) {
+                                list.handleInput(data);
+                              } else {
+                                input.handleInput(data);
+                                const value = input.getValue();
+                                if (value !== lastValue) {
+                                  lastValue = value;
+                                  const query = value.toLowerCase();
+                                  list = createList(
+                                    modelItems.filter(
+                                      (item) =>
+                                        item.value === "__CUSTOM__" ||
+                                        item.label.toLowerCase().includes(query),
+                                    ),
+                                  );
+                                  renderContainer();
+                                }
+                              }
+                              tui.requestRender();
+                            },
+                          };
+                        },
+                        { overlay: true },
+                      );
+                      if (newModel === "__CUSTOM__") {
+                        newModel = await promptInput(
+                          ctx,
+                          `Custom model for ${agentName}:`,
+                          conf.model,
+                        );
+                      }
+                      if (newModel !== null) {
+                        conf.model = newModel;
+                        await writeJson(PROFILES_PATH, profiles);
+                      }
+                    } else if (pickedMod === "thinking") {
                   const thinkingLevels = [
                     "low",
                     "medium",
