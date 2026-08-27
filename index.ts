@@ -6,7 +6,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { DynamicBorder, getAgentDir } from "@earendil-works/pi-coding-agent";
 import { Container, SelectList, Text, Input } from "@earendil-works/pi-tui";
 import { supportedShortcut } from "./src/config.js";
-import { DEFAULT_SHORTCUT, STATUS_KEY } from "./src/constants.js";
+import { STATUS_KEY } from "./src/constants.js";
 import { ProfileManager } from "./src/profile-manager.js";
 
 const GENTLE_DIR = path.join(os.homedir(), ".pi", "gentle-ai");
@@ -15,11 +15,13 @@ const PROFILES_PATH = path.join(GENTLE_DIR, "sdd-profiles-manager.json");
 const AGENT_HOME =
   process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
 const SETTINGS_PATH = path.join(AGENT_HOME, "settings.json");
+const SUBAGENTS_PATH = path.join(AGENT_HOME, "subagents.json");
 
 interface Profile {
   name: string;
   orchestrator: { model: string; thinking: string };
   agents: Record<string, { model: string; thinking: string }>;
+  favorite?: boolean;
 }
 
 async function readJson(fp: string): Promise<any> {
@@ -35,6 +37,32 @@ async function readJson(fp: string): Promise<any> {
 async function writeJson(fp: string, data: any): Promise<void> {
   await fs.mkdir(path.dirname(fp), { recursive: true });
   await fs.writeFile(fp, JSON.stringify(data, null, 2));
+}
+
+async function applyProfileModels(profile: Profile): Promise<void> {
+  const currentModels = await readJson(MODELS_PATH);
+  const newModels: Record<string, { model: string; thinking: string }> = {
+    ...currentModels,
+    ...(profile.orchestrator
+      ? { "gentle-orchestrator": profile.orchestrator }
+      : {}),
+    ...(profile.agents ?? {}),
+  };
+  await writeJson(MODELS_PATH, newModels);
+
+  // pi-subagents resolves effective routing from subagents.json, not models.json.
+  const subagentsConfig = await readJson(SUBAGENTS_PATH);
+  const modelProfiles = { ...(subagentsConfig.model_profiles ?? {}) };
+  for (const [name, route] of Object.entries(profile.agents ?? {})) {
+    modelProfiles[name] = {
+      model: route.model,
+      effort: route.thinking,
+    };
+  }
+  await writeJson(SUBAGENTS_PATH, {
+    ...subagentsConfig,
+    model_profiles: modelProfiles,
+  });
 }
 
 /**
@@ -140,6 +168,8 @@ async function promptInput(
 }
 
 export default function (pi: ExtensionAPI) {
+  let activeProfile: string | undefined;
+
   pi.registerCommand("profiles", {
     description: "Manage SDD model profiles",
     handler: async (args, ctx) => {
@@ -184,7 +214,10 @@ export default function (pi: ExtensionAPI) {
           },
           ...profileNames.map((name) => ({
             value: name,
-            label: name,
+            label:
+              name +
+              (name === activeProfile ? " [▶ Active]" : "") +
+              (profiles[name].favorite ? " [★ Favorite]" : ""),
             description: `Orchestrator: ${profiles[name].orchestrator?.model || "none"}`,
           })),
         ];
@@ -270,6 +303,11 @@ export default function (pi: ExtensionAPI) {
               description: "Apply this profile and switch main model",
             },
             {
+              value: "favorite",
+              label: "★ Set as Favorite",
+              description: "Mark this profile as the session default",
+            },
+            {
               value: "edit",
               label: "✎ Edit",
               description: "Modify agents in this profile",
@@ -335,16 +373,7 @@ export default function (pi: ExtensionAPI) {
 
           if (selectedAction === "activate") {
             const profile = profiles[selectedProfile];
-            const newModels: any = {};
-            if (profile.orchestrator) {
-              newModels["gentle-orchestrator"] = profile.orchestrator;
-            }
-            if (profile.agents) {
-              for (const key of Object.keys(profile.agents)) {
-                newModels[key] = profile.agents[key];
-              }
-            }
-            await writeJson(MODELS_PATH, newModels);
+            await applyProfileModels(profile);
 
             // Apply orchestrator model as main model in real time
             if (profile.orchestrator?.model) {
@@ -355,7 +384,18 @@ export default function (pi: ExtensionAPI) {
                 "info",
               );
             }
+            activeProfile = selectedProfile;
+            ctx.ui.setStatus(STATUS_KEY, selectedProfile);
             return;
+          }
+
+          if (selectedAction === "favorite") {
+            for (const key of Object.keys(profiles)) {
+              profiles[key].favorite = key === selectedProfile;
+            }
+            await writeJson(PROFILES_PATH, profiles);
+            ctx.ui.notify(`Set '${selectedProfile}' as favorite.`, "info");
+            break;
           }
 
           if (selectedAction === "delete") {
@@ -613,8 +653,6 @@ export default function (pi: ExtensionAPI) {
   });
 
   // --- Shortcut Registration ---
-  let activeProfile: string | undefined;
-  const shortcut = "ctrl+alt+p";
   const shortcutHandler = {
     description: "Cycle agent profile",
     async handler(ctx: any) {
@@ -626,6 +664,7 @@ export default function (pi: ExtensionAPI) {
         const idx = names.indexOf(activeProfile ?? "");
         const next = names[(idx + 1 + names.length) % names.length];
         const profile = profiles[next];
+        await applyProfileModels(profile);
         if (profile?.orchestrator?.model) {
           await applyMainModel(pi, ctx, profile.orchestrator.model);
         }
@@ -640,26 +679,47 @@ export default function (pi: ExtensionAPI) {
       }
     },
   };
-  if (supportedShortcut(shortcut)) {
+  // Register ctrl+shift+p as the profile cycling shortcut
+  if (supportedShortcut("ctrl+shift+p")) {
     try {
-      pi.registerShortcut(shortcut as any, shortcutHandler);
+      pi.registerShortcut("ctrl+shift+p" as any, shortcutHandler);
     } catch {
-      try {
-        pi.registerShortcut(DEFAULT_SHORTCUT as any, shortcutHandler);
-      } catch {
-        // Shortcut unavailable, continue without it
-      }
+      // Shortcut unavailable, continue without it
     }
   }
 
   // --- Lifecycle Hooks ---
-  pi.on("session_start", async (_event: unknown, _ctx: any) => {
+  pi.on("session_start", async (_event: unknown, ctx: any) => {
     try {
       const profiles: Record<string, Profile> = await readJson(PROFILES_PATH);
       const names = Object.keys(profiles);
       if (!names.length) return;
-      // Auto-apply first profile if configured as default
-      // (future: read defaultProfile from config)
+
+      const favoriteName = Object.keys(profiles).find(
+        (n) => profiles[n].favorite,
+      );
+      if (favoriteName) {
+        const profile = profiles[favoriteName];
+        await applyProfileModels(profile);
+        if (profile.orchestrator?.model) {
+          await applyMainModel(pi, ctx, profile.orchestrator.model);
+        }
+        activeProfile = favoriteName;
+        ctx.ui.setStatus(STATUS_KEY, favoriteName);
+      } else {
+        // Fallback: Infer the active profile from the current models.json
+        const currentModels = await readJson(MODELS_PATH);
+        const currentOrch = currentModels["gentle-orchestrator"]?.model;
+        if (currentOrch) {
+          const matchedName = names.find(
+            (n) => profiles[n].orchestrator?.model === currentOrch,
+          );
+          if (matchedName) {
+            activeProfile = matchedName;
+            ctx.ui.setStatus(STATUS_KEY, matchedName);
+          }
+        }
+      }
     } catch {
       // Graceful degradation
     }
