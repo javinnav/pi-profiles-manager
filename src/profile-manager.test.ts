@@ -154,14 +154,37 @@ describe("ProfileManager", () => {
       );
     });
 
-    it("throws for unknown profile", async () => {
-      const mgr = new ProfileManager(mockPi(), mockCtx());
-      mgr.setConfig(config());
+        it("does not fall back to the orchestrator route for unmanaged agents", async () => {
+          const mgr = new ProfileManager(mockPi(), mockCtx());
+          mgr.setConfig(
+            config({
+              selected: {
+                orchestrator: {
+                  model: { provider: "anthropic", id: "claude" },
+                },
+                agents: {
+                  reviewer: { effort: "low" },
+                },
+              },
+            }),
+          );
 
-      await expect(mgr.use("nonexistent")).rejects.toThrow(
-        "Unknown profile: nonexistent",
-      );
-    });
+          await mgr.use("selected");
+
+          expect(mgr.resolveAgentRoute("reviewer", "session-1")).toEqual({
+            effort: "low",
+          });
+          expect(mgr.resolveAgentRoute("writer", "session-1")).toBeUndefined();
+        });
+
+        it("throws for unknown profile", async () => {
+          const mgr = new ProfileManager(mockPi(), mockCtx());
+          mgr.setConfig(config());
+
+          await expect(mgr.use("nonexistent")).rejects.toThrow(
+            "Unknown profile: nonexistent",
+          );
+        });
 
     it("rolls back on model failure", async () => {
       const pi = mockPi({
