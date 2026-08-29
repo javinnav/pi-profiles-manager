@@ -6,7 +6,7 @@ import {
   DynamicBorder,
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Input, SelectList, Text } from "@earendil-works/pi-tui";
+import { Container, Input, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
 import { emptyConfig, migrateV1, normalizeAgent, supportedShortcut, validateConfig } from "./config.js";
 import { registerCommands } from "./commands.js";
 import { DEFAULT_SHORTCUT, STATUS_KEY } from "./constants.js";
@@ -142,6 +142,26 @@ function prompt(ctx: ContextLike, title: string, initial = ""): Promise<string |
       handleInput: (data: string) => { input.handleInput(data); tui.requestRender(); },
     };
   }, { overlay: true });
+}
+
+function showCopyConfirmation(ctx: ContextLike, message: string): Promise<void> {
+  return (ctx.ui.custom as any)((tui: any, theme: any, _kb: any, done: any) => {
+    const container = new Container() as any;
+    container.addChild(new DynamicBorder((value: string) => theme.fg("accent", value)));
+    container.addChild(new Text(theme.fg("accent", theme.bold(message)), 1, 0));
+    container.addChild(new DynamicBorder((value: string) => theme.fg("accent", value)));
+    return {
+      render: (width: number) => container.render(width),
+      invalidate: () => container.invalidate(),
+      handleInput: (data: string) => {
+        if (matchesKey(data, "return") || matchesKey(data, "escape")) done();
+        tui.requestRender();
+      },
+    };
+  }, {
+    overlay: true,
+    overlayOptions: { anchor: "center" },
+  });
 }
 
 type GlobalAgentRoute = { model?: string; effort?: ThinkingLevel };
@@ -437,8 +457,12 @@ export default function extension(pi: PiLike) {
             favorite: selected === manager.config.defaultProfile,
           },
         })).toString("base64");
-        try { await copyToClipboard(`piprofile:1:${encoded}`); ctx.ui.notify(`Copied profile '${selected}' to clipboard.`, "info"); }
-        catch (error) { ctx.ui.notify(`Failed to copy profile '${selected}' to clipboard: ${error instanceof Error ? error.message : String(error)}`, "error"); }
+        try {
+          await copyToClipboard(`piprofile:1:${encoded}`);
+          await showCopyConfirmation(ctx, `Copied profile '${selected}' to clipboard.`);
+        } catch (error) {
+          ctx.ui.notify(`Failed to copy profile '${selected}' to clipboard: ${error instanceof Error ? error.message : String(error)}`, "error");
+        }
         continue;
       }
       if (action === "delete") {
