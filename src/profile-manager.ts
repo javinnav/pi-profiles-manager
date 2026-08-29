@@ -19,6 +19,10 @@ export class ProfileManager {
   constructor(
     readonly pi: PiLike,
     ctx?: ContextLike,
+    private readonly applyAgentRoutes: (
+      routes: Record<string, PersistedRoute>,
+      previousRoutes: string[],
+    ) => Promise<void> = async () => {},
   ) {
     this.ctx = ctx;
   }
@@ -100,10 +104,17 @@ export class ProfileManager {
 
     try {
       await this.apply(ctx, target);
+      await this.applyAgentRoutes(
+        profile.agents ?? {},
+        current?.agentRoutes ?? Object.keys(
+          current ? this.config.profiles[current.profile]?.agents ?? {} : {},
+        ),
+      );
       const snapshot: ActiveSnapshot = {
         profile: name,
         route: resolveDefaultRoute(profile.orchestrator),
         baseline,
+        agentRoutes: Object.keys(profile.agents ?? {}),
         activatedAt: new Date().toISOString(),
       };
       this.state.activate(this.pi, ctx, snapshot);
@@ -153,7 +164,8 @@ export class ProfileManager {
   resolveAgentRoute(agent: string, sessionId: string): Route | undefined {
     const active = this.state.get(sessionId);
     if (!active) return undefined;
-    // Per-agent routing deferred — return undefined for now
-    return undefined;
+    const profile = this.config.profiles[active.profile];
+    const route = profile?.agents?.[normalizeAgent(agent)];
+    return route ? resolveDefaultRoute(route) : undefined;
   }
 }
