@@ -1,14 +1,20 @@
 import { describe, expect, it, vi } from "vitest";
 
+const codingAgentState = vi.hoisted(() => ({
+  copyToClipboard: vi.fn(),
+}));
+
 // Mock the Pi SDK before importing extension
 vi.mock("@earendil-works/pi-coding-agent", () => ({
   getAgentDir: () => "/tmp/mock-agent",
   DynamicBorder: class { constructor(..._args: any[]) {} },
+  copyToClipboard: codingAgentState.copyToClipboard,
 }));
 
 const tuiState = vi.hoisted(() => ({
   lists: [] as any[],
   inputs: [] as any[],
+  texts: [] as any[][],
 }));
 
 vi.mock("@earendil-works/pi-tui", () => ({
@@ -35,7 +41,9 @@ vi.mock("@earendil-works/pi-tui", () => ({
     constructor(public items: any[]) { tuiState.lists.push(this); }
     handleInput(data: string) { this.inputs.push(data); }
   },
-  Text: class { constructor(..._args: any[]) {} },
+  Text: class {
+    constructor(...args: any[]) { tuiState.texts.push(args); }
+  },
 }));
 
 vi.mock("node:fs/promises", () => ({
@@ -193,6 +201,51 @@ describe("extension", () => {
     );
   });
 
+  it("reports clipboard failures without claiming success", async () => {
+    codingAgentState.copyToClipboard.mockReset();
+    codingAgentState.copyToClipboard.mockRejectedValue(
+      new Error("clipboard unavailable"),
+    );
+    const pi = mockPi();
+    profilesExtension(pi as any);
+    const handler = (pi.registerCommand as any).mock.calls.find(
+      (call: any[]) => call[0] === "profiles",
+    )[1].handler;
+    const results = ["work", "export", null, null];
+    tuiState.texts = [];
+    const custom = vi.fn(async (factory: any) => {
+      factory(
+        { requestRender: vi.fn() },
+        { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+        {},
+        vi.fn(),
+      );
+      return results.shift();
+    });
+    const select = vi.fn();
+    const ctx = {
+      modelRegistry: { find: vi.fn(), getAvailable: vi.fn(async () => []) },
+      ui: { custom, select, notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler([], ctx);
+
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Failed to copy profile 'work' to clipboard: clipboard unavailable",
+      "error",
+    );
+    expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+      "Copied profile 'work' to clipboard.",
+      "info",
+    );
+    expect(select).not.toHaveBeenCalled();
+    expect(tuiState.texts).not.toContainEqual([
+      "Copied profile 'work' to clipboard.",
+      1,
+      0,
+    ]);
+  });
+
   it("searches all available model labels by case-insensitive substring", async () => {
     tuiState.lists = [];
     const pi = mockPi();
@@ -258,7 +311,8 @@ describe("extension", () => {
 
   it("imports and exports profiles via single versioned string, avoiding name collisions and rejecting invalid payloads", async () => {
     tuiState.lists = [];
-    tuiState.inputs = [];
+    codingAgentState.copyToClipboard.mockReset();
+    codingAgentState.copyToClipboard.mockResolvedValue(undefined);
     const pi = mockPi();
     profilesExtension(pi as any);
     const handler = (pi.registerCommand as any).mock.calls.find(
@@ -292,22 +346,26 @@ describe("extension", () => {
     };
     const base64Valid = "piprofile:1:" + Buffer.from(JSON.stringify(payloadValid)).toString("base64");
 
+    let confirmationView: any;
+    let confirmationOptions: any;
+    let confirmationDone: any;
     const custom = vi
       .fn()
       // 1. main menu (export flow)
       .mockResolvedValueOnce("work")
       // 2. action menu
       .mockResolvedValueOnce("export")
-      // 3. promptInput for export string
-      .mockImplementationOnce(async (factory) => {
-        // execute it to hit the new Input() creation
-        factory(
-          null, // tui
-          { fg: (_c: any, s: any) => s, bold: (s: any) => s },
-          null,
-          (_val: any) => {}
+      // 3. success confirmation overlay
+      .mockImplementationOnce(async (factory: any, options: any) => {
+        confirmationOptions = options;
+        confirmationDone = vi.fn();
+        confirmationView = factory(
+          { requestRender: vi.fn() },
+          { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+          {},
+          confirmationDone,
         );
-        return null;
+        return "Continue";
       })
       // 4. action menu loops again, we return null to go back
       .mockResolvedValueOnce(null)
@@ -347,13 +405,28 @@ describe("extension", () => {
     await handler([], ctx);
 
     // Verify EXPORT: exact round trip format
-    expect(tuiState.inputs.length).toBeGreaterThan(0);
-    const exportedStr = tuiState.inputs[0].getValue();
-    expect(exportedStr.startsWith("piprofile:1:")).toBe(true);
-    const decoded = JSON.parse(Buffer.from(exportedStr.slice("piprofile:1:".length), "base64").toString("utf-8"));
-    expect(decoded.version).toBe(1);
-    expect(decoded.profile.name).toBe("work");
-    expect(decoded.profile.orchestrator.model).toBe("provider/model"); // mock fs has this
+    expect(codingAgentState.copyToClipboard).toHaveBeenCalledWith(
+      "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6IndvcmsiLCJvcmNoZXN0cmF0b3IiOnsibW9kZWwiOiJwcm92aWRlci9tb2RlbCIsInRoaW5raW5nIjoibWVkaXVtIn0sImFnZW50cyI6e319fQ==",
+    );
+    expect(confirmationOptions).toEqual({ overlay: true });
+    expect(confirmationView).toBeDefined();
+    expect(tuiState.texts).toContainEqual([
+      "Copied profile 'work' to clipboard.",
+      1,
+      0,
+    ]);
+    const confirmationList = tuiState.lists.at(-1);
+    expect(confirmationList.items).toEqual([
+      { value: "Continue", label: "Continue" },
+    ]);
+    confirmationList.onSelect(confirmationList.items[0]);
+    confirmationList.onCancel();
+    expect(confirmationDone).toHaveBeenNthCalledWith(1, "Continue");
+    expect(confirmationDone).toHaveBeenNthCalledWith(2, null);
+    expect(ctx.ui.notify).not.toHaveBeenCalledWith(
+      "Copied profile 'work' to clipboard.",
+      "info",
+    );
 
     // Verify ALL INVALID INPUTS caused NO write and threw correct errors
     expect(ctx.ui.notify).toHaveBeenCalledWith(

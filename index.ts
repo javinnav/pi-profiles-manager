@@ -2,7 +2,7 @@ import * as fs from "fs/promises";
 import * as os from "os";
 import * as path from "path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
+import { copyToClipboard, DynamicBorder } from "@earendil-works/pi-coding-agent";
 import { Container, SelectList, Text, Input } from "@earendil-works/pi-tui";
 import { supportedShortcut } from "./src/config.js";
 import { STATUS_KEY } from "./src/constants.js";
@@ -159,6 +159,42 @@ async function promptInput(
         render: (w: number) => container.render(w),
         invalidate: () => container.invalidate(),
         handleInput: (data: string) => container.handleInput(data),
+      };
+    },
+    { overlay: true },
+  );
+}
+
+async function showCopyConfirmation(ctx: any, message: string): Promise<string | null> {
+  return await ctx.ui.custom(
+    (tui: any, theme: any, _kb: any, done: any) => {
+      const container = new Container();
+      container.addChild(
+        new DynamicBorder((s: string) => theme.fg("accent", s)),
+      );
+      container.addChild(new Text(theme.fg("accent", theme.bold(message)), 1, 0));
+
+      const list = new SelectList([{ value: "Continue", label: "Continue" }], 1, {
+        selectedPrefix: (t) => theme.fg("accent", t),
+        selectedText: (t) => theme.fg("accent", t),
+        description: (t) => theme.fg("muted", t),
+        scrollInfo: (t) => theme.fg("dim", t),
+        noMatch: (t) => theme.fg("warning", t),
+      });
+      list.onSelect = (item) => done(item.value);
+      list.onCancel = () => done(null);
+      container.addChild(list);
+      container.addChild(
+        new DynamicBorder((s: string) => theme.fg("accent", s)),
+      );
+
+      return {
+        render: (w: number) => container.render(w),
+        invalidate: () => container.invalidate(),
+        handleInput: (data: string) => {
+          list.handleInput(data);
+          tui.requestRender();
+        },
       };
     },
     { overlay: true },
@@ -516,11 +552,20 @@ export default function (pi: ExtensionAPI) {
             const exportedStr =
               "piprofile:1:" +
               Buffer.from(JSON.stringify(payload)).toString("base64");
-            await promptInput(
-              ctx,
-              `Copy this export string for '${selectedProfile}' (Esc/Enter to exit):`,
-              exportedStr,
-            );
+            try {
+              await copyToClipboard(exportedStr);
+              await showCopyConfirmation(
+                ctx,
+                `Copied profile '${selectedProfile}' to clipboard.`,
+              );
+            } catch (error: unknown) {
+              ctx.ui.notify(
+                `Failed to copy profile '${selectedProfile}' to clipboard: ${
+                  error instanceof Error ? error.message : String(error)
+                }`,
+                "error",
+              );
+            }
             continue; // Keep action menu open
           }
 
