@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ProfileManager } from "./profile-manager.js";
-import type { Config, ContextLike, PiLike } from "./types.js";
+import type { Config, ContextLike, PiLike, Profile } from "./types.js";
 
 function mockPi(overrides?: Partial<PiLike>): PiLike {
   return {
@@ -35,7 +35,7 @@ function mockCtx(
   } as unknown as ContextLike;
 }
 
-function config(profiles: Record<string, any> = {}): Config {
+function config(profiles: Record<string, Partial<Profile>> = {}): Config {
   return {
     version: 1,
     profiles: Object.fromEntries(
@@ -127,6 +127,31 @@ describe("ProfileManager", () => {
 
       await mgr.use("inherit");
       expect(pi.setThinkingLevel).not.toHaveBeenCalled();
+    });
+
+    it("applies only explicit agent routes when profiles are used and cycled", async () => {
+      const pi = mockPi();
+      const ctx = mockCtx();
+      const applyAgentRoutes = vi.fn(async () => {});
+      const mgr = new (ProfileManager as any)(pi, ctx, applyAgentRoutes);
+      mgr.setConfig(config({
+        a: { agents: { reviewer: { effort: "low" } } },
+        b: { agents: { writer: { model: { provider: "openai", id: "gpt-4" } } } },
+      }));
+
+      await mgr.use("a");
+      await mgr.next();
+
+      expect(applyAgentRoutes).toHaveBeenNthCalledWith(
+        1,
+        { reviewer: { effort: "low" } },
+        [],
+      );
+      expect(applyAgentRoutes).toHaveBeenNthCalledWith(
+        2,
+        { writer: { model: { provider: "openai", id: "gpt-4" } } },
+        ["reviewer"],
+      );
     });
 
     it("throws for unknown profile", async () => {

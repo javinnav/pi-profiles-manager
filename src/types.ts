@@ -39,6 +39,8 @@ export type ActiveSnapshot = {
   profile: string;
   route: Route;
   baseline: Route;
+  /** Explicit profile agent routes applied to the global agent-route store. */
+  agentRoutes?: string[];
   activatedAt: string;
 };
 

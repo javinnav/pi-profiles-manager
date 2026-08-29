@@ -1,14 +1,13 @@
 import type { ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import type { ProfileManager } from "./profile-manager.js";
-import type { PiLike } from "./types.js";
+import type { ContextLike, PiLike } from "./types.js";
 
 type SaveFn = (
   ctx: ExtensionCommandContext,
   name: string,
-  profile: any,
-  scope: string,
 ) => Promise<void>;
 type LoadFn = (ctx: ExtensionCommandContext) => Promise<void>;
+type OpenTuiFn = (ctx: ContextLike) => Promise<void>;
 
 export function parseCommand(input: string): { verb: string; name: string } {
   const [verb = "", ...rest] = input.trim().split(/\s+/);
@@ -20,6 +19,7 @@ export function registerCommands(
   manager: ProfileManager,
   _save: SaveFn,
   _load: LoadFn,
+  openTui: OpenTuiFn = async () => {},
 ) {
   pi.registerCommand("profiles", {
     description: "Manage SDD model profiles",
@@ -44,10 +44,17 @@ export function registerCommands(
           if (!name) {
             return ctx.ui.notify("Usage: /profiles use <name>", "error");
           }
-          await manager.use(name);
-          return;
-        }
-        if (verb === "next") {
+              await manager.use(name);
+              return;
+            }
+            if (verb === "save") {
+              if (!name) {
+                return ctx.ui.notify("Usage: /profiles save <name>", "error");
+              }
+              await _save(ctx, name);
+              return;
+            }
+            if (verb === "next") {
           await manager.next();
           return;
         }
@@ -55,13 +62,7 @@ export function registerCommands(
           await manager.off();
           return;
         }
-        // Default: open interactive TUI (existing behavior preserved)
-        // The old /profiles and /profiles save commands continue to work
-        // through the original monolith code in index.ts
-        return ctx.ui.notify(
-          "Use /profiles list, /profiles use <name>, /profiles next, or /profiles off",
-          "info",
-        );
+        return openTui(ctx as ContextLike);
       } catch (error: unknown) {
         ctx.ui.notify(
           error instanceof Error ? error.message : String(error),

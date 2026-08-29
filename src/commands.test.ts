@@ -126,6 +126,42 @@ describe("registerCommands", () => {
     );
   });
 
+  it("save subcommand delegates a named snapshot without opening the TUI", async () => {
+    const pi = mockPi();
+    const ctx = mockCtx();
+    const mgr = new ProfileManager(pi, ctx);
+    const save = vi.fn(async () => {});
+    const openTui = vi.fn(async () => {});
+    mgr.setConfig(configWithProfiles([]));
+
+    registerCommands(pi, mgr, save as any, vi.fn() as any, openTui);
+
+    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
+    await handler("save snapshot", ctx);
+
+    expect(save).toHaveBeenCalledWith(ctx, "snapshot");
+    expect(openTui).not.toHaveBeenCalled();
+  });
+
+  it("save without a name notifies usage", async () => {
+    const pi = mockPi();
+    const ctx = mockCtx();
+    const mgr = new ProfileManager(pi, ctx);
+    const save = vi.fn(async () => {});
+    mgr.setConfig(configWithProfiles([]));
+
+    registerCommands(pi, mgr, save as any, vi.fn() as any);
+
+    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
+    await handler("save", ctx);
+
+    expect(save).not.toHaveBeenCalled();
+    expect(ctx.ui.notify).toHaveBeenCalledWith(
+      "Usage: /profiles save <name>",
+      "error",
+    );
+  });
+
   it("off subcommand deactivates", async () => {
     const pi = mockPi();
     const ctx = mockCtx();
