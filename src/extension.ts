@@ -9,6 +9,7 @@ import {
 import { Container, Input, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
 import { emptyConfig, migrateV1, normalizeAgent, supportedShortcut, validateConfig } from "./config.js";
 import { registerCommands } from "./commands.js";
+import { discoverManagedAgentNames, reconcileProfileAgents } from "./sync.js";
 import { DEFAULT_SHORTCUT, STATUS_KEY } from "./constants.js";
 import { ProfileManager } from "./profile-manager.js";
 import type {
@@ -507,5 +508,10 @@ export default function extension(pi: PiLike) {
       profiles: { ...fresh.profiles, [name]: profile },
     });
     ctx.ui.notify(`Saved profile '${name}'`, "info");
-  }, async () => {}, openTui);
+  }, async () => {}, openTui, async (ctx) => {
+    const agents = await discoverManagedAgentNames(join(agentDir, "agents"));
+    const result = reconcileProfileAgents(await readConfig(configPath), agents);
+    await persist(result.config);
+    ctx.ui.notify(`Profiles synced: +${result.added}, -${result.removed}`, "info");
+  });
 }

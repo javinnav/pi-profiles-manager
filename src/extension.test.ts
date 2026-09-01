@@ -557,6 +557,37 @@ describe("package extension", () => {
     );
   });
 
+  it("syncs from the persisted config instead of stale manager state", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: { stale: { order: 0 } },
+    }));
+    const fs = await import("node:fs/promises");
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      version: 1,
+      profiles: { persisted: { order: 0 } },
+    }));
+    vi.mocked(fs.writeFile).mockClear();
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("sync", ctx);
+
+    const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
+    expect(saved.profiles).toEqual({ persisted: { order: 0 } });
+    expect(ctx.ui.notify).toHaveBeenCalledWith("Profiles synced: +0, -0", "info");
+  });
+
   it("restores the typed default profile during session startup", async () => {
     const syncFs = await import("node:fs");
     vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
