@@ -192,4 +192,21 @@ describe("registerCommands", () => {
 
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "a");
   });
+
+  it("sync subcommand delegates without opening the TUI", async () => {
+    const pi = mockPi();
+    const ctx = mockCtx();
+    const mgr = new ProfileManager(pi, ctx);
+    const sync = vi.fn(async () => {});
+    const openTui = vi.fn(async () => {});
+    mgr.setConfig(configWithProfiles([]));
+
+    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any, openTui, sync);
+
+    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
+    await handler("sync", ctx);
+
+    expect(sync).toHaveBeenCalledWith(ctx);
+    expect(openTui).not.toHaveBeenCalled();
+  });
 });

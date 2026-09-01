@@ -8,6 +8,7 @@ type SaveFn = (
 ) => Promise<void>;
 type LoadFn = (ctx: ExtensionCommandContext) => Promise<void>;
 type OpenTuiFn = (ctx: ContextLike) => Promise<void>;
+type SyncFn = (ctx: ExtensionCommandContext) => Promise<void>;
 
 export function parseCommand(input: string): { verb: string; name: string } {
   const [verb = "", ...rest] = input.trim().split(/\s+/);
@@ -20,6 +21,7 @@ export function registerCommands(
   _save: SaveFn,
   _load: LoadFn,
   openTui: OpenTuiFn = async () => {},
+  sync: SyncFn = async () => {},
 ) {
   pi.registerCommand("profiles", {
     description: "Manage SDD model profiles",
@@ -40,6 +42,10 @@ export function registerCommands(
           const active = manager.state.get(ctx.sessionManager.getSessionId());
           return ctx.ui.notify(active?.profile ?? "none");
         }
+            if (verb === "sync") {
+              await sync(ctx);
+              return;
+            }
         if (verb === "use") {
           if (!name) {
             return ctx.ui.notify("Usage: /profiles use <name>", "error");
