@@ -4,6 +4,18 @@
   "description": "Interactive SDD model profile management built natively for the Pi Coding Agent.",
   "main": "index.ts",
   "type": "module",
+  "files": [
+    "index.ts",
+    "src"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "package-check": "npm pack --dry-run"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "keywords": [
     "pi-agent-extension",
     "pi-package"
@@ -15,6 +27,10 @@
   },
   "author": "javinnav",
   "license": "MIT",
+  "homepage": "https://github.com/javinnav/pi-profiles-manager#readme",
+  "bugs": {
+    "url": "https://github.com/javinnav/pi-profiles-manager/issues"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/javinnav/pi-profiles-manager.git"
