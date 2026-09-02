@@ -174,12 +174,26 @@ function prompt(ctx: ContextLike, title: string, initial = ""): Promise<string |
   }, { overlay: true });
 }
 
-function showCopyConfirmation(ctx: ContextLike, message: string): Promise<void> {
-  return (ctx.ui.custom as any)((tui: any, theme: any, _kb: any, done: any) => {
-    const container = new Container() as any;
+function showExportDialog(ctx: ContextLike, profileName: string, exportString: string, copyPromise: Promise<void>): Promise<void> {
+  return (ctx.ui.custom as (factory: unknown, options?: unknown) => Promise<void>)((tui: { requestRender: () => void }, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }, _kb: unknown, done: (value: void) => void) => {
+    const container = new Container() as { addChild: (child: unknown) => void; render: (width: number) => unknown; invalidate: () => void };
+    const statusText = new Text(theme.fg("accent", theme.bold(`Copying profile '${profileName}' to clipboard...`)), 1, 0);
+
     container.addChild(new DynamicBorder((value: string) => theme.fg("accent", value)));
-    container.addChild(new Text(theme.fg("accent", theme.bold(message)), 1, 0));
+    container.addChild(statusText);
+    container.addChild(new Text(theme.fg("accent", exportString), 1, 0));
     container.addChild(new DynamicBorder((value: string) => theme.fg("accent", value)));
+
+    copyPromise.then(() => {
+      statusText.setText(theme.fg("accent", theme.bold(`Copied profile '${profileName}' to clipboard.`)));
+      container.invalidate();
+      tui.requestRender();
+    }).catch((error) => {
+      statusText.setText(theme.fg("error", theme.bold(`Failed to copy profile '${profileName}' to clipboard: ${error instanceof Error ? error.message : String(error)}`)));
+      container.invalidate();
+      tui.requestRender();
+    });
+
     return {
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
@@ -509,12 +523,9 @@ export default function extension(pi: PiLike) {
             favorite: selected === manager.config.defaultProfile,
           },
         })).toString("base64");
-        try {
-          await copyToClipboard(`piprofile:1:${encoded}`);
-          await showCopyConfirmation(ctx, `Copied profile '${selected}' to clipboard.`);
-        } catch (error) {
-          ctx.ui.notify(`Failed to copy profile '${selected}' to clipboard: ${error instanceof Error ? error.message : String(error)}`, "error");
-        }
+        const exportString = `piprofile:1:${encoded}`;
+        const copyPromise = copyToClipboard(exportString);
+        await showExportDialog(ctx, selected, exportString, copyPromise);
         continue;
       }
       if (action === "delete") {

@@ -34,6 +34,7 @@ vi.mock("@earendil-works/pi-tui", () => ({
   },
   Text: class {
     constructor(...args: unknown[]) { tuiState.texts.push(args); }
+    setText(text: string) { tuiState.texts.push([text, 1, 0]); }
   },
   matchesKey: (data: string, key: string) => data === key,
 }));
@@ -266,7 +267,7 @@ describe("package extension", () => {
   });
 
   it.each(["return", "escape"])(
-    "keeps export confirmation open until %s dismisses it",
+    "keeps export string visible until %s dismisses it",
     async (dismissKey) => {
       const syncFs = await import("node:fs");
       vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
@@ -290,7 +291,7 @@ describe("package extension", () => {
         .fn()
         .mockResolvedValueOnce("alpha")
         .mockResolvedValueOnce("export")
-        .mockImplementationOnce(async (factory: any, options: unknown) => {
+        .mockImplementationOnce(async (factory: (tui: { requestRender: () => void }, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }, kb: unknown, done: (value: unknown) => void) => { handleInput(data: string): void }, options: unknown) => {
           confirmationOptions = options;
           return await new Promise((resolve) => {
             finishConfirmation = resolve;
@@ -320,7 +321,12 @@ describe("package extension", () => {
         "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
       );
       expect(tuiState.texts).toContainEqual([
-        "Copied profile 'alpha' to clipboard.",
+        "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
+        1,
+        0,
+      ]);
+      expect(tuiState.texts).toContainEqual([
+        expect.stringContaining("Copied profile 'alpha' to clipboard"),
         1,
         0,
       ]);
@@ -331,7 +337,7 @@ describe("package extension", () => {
       expect(confirmationView).toBeDefined();
       expect(handlerSettled).toBe(false);
 
-      confirmationView!.handleInput(dismissKey);
+      confirmationView?.handleInput(dismissKey);
       await handling;
 
       expect(finishConfirmation).toBeDefined();
@@ -343,7 +349,7 @@ describe("package extension", () => {
     },
   );
 
-  it("reports clipboard failures without showing export confirmation", async () => {
+  it("keeps export string visible and shows error if clipboard fails", async () => {
     const syncFs = await import("node:fs");
     vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
       version: 1,
@@ -358,10 +364,27 @@ describe("package extension", () => {
     const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
       ([name]: [string]) => name === "profiles",
     )[1].handler as (args: string, ctx: any) => Promise<void>;
+    
+    let confirmationView: { handleInput(data: string): void } | undefined;
+    let finishConfirmation: ((value: unknown) => void) | undefined;
     const custom = vi
       .fn()
       .mockResolvedValueOnce("alpha")
       .mockResolvedValueOnce("export")
+      .mockImplementationOnce(async (factory: (tui: { requestRender: () => void }, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }, kb: unknown, done: (value: unknown) => void) => { handleInput(data: string): void }, _options: unknown) => {
+        return await new Promise((resolve) => {
+          finishConfirmation = resolve;
+          confirmationView = factory(
+            { requestRender: vi.fn() },
+            {
+              fg: (_color: string, text: string) => text,
+              bold: (text: string) => text,
+            },
+            {},
+            resolve,
+          );
+        });
+      })
       .mockResolvedValueOnce(null);
     const ctx = {
       sessionManager: { getSessionId: () => "session-1" },
@@ -369,22 +392,28 @@ describe("package extension", () => {
       ui: { custom, notify: vi.fn(), setStatus: vi.fn() },
     };
 
-    await handler("", ctx);
+    let handlerSettled = false;
+    const handling = handler("", ctx).then(() => { handlerSettled = true; });
+    await vi.waitFor(() => expect(custom).toHaveBeenCalledTimes(3));
 
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      "Failed to copy profile 'alpha' to clipboard: clipboard unavailable",
-      "error",
-    );
-    expect(custom).toHaveBeenCalledTimes(3);
-    expect(tuiState.texts).not.toContainEqual([
-      "Copied profile 'alpha' to clipboard.",
+    expect(tuiState.texts).toContainEqual([
+      "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
       1,
       0,
     ]);
-    expect(ctx.ui.notify).not.toHaveBeenCalledWith(
-      "Copied profile 'alpha' to clipboard.",
-      "info",
-    );
+    expect(tuiState.texts).toContainEqual([
+      expect.stringContaining("Failed to copy profile 'alpha' to clipboard"),
+      1,
+      0,
+    ]);
+    expect(confirmationView).toBeDefined();
+    expect(handlerSettled).toBe(false);
+
+    confirmationView?.handleInput("return");
+    await handling;
+
+    expect(finishConfirmation).toBeDefined();
+    expect(handlerSettled).toBe(true);
   });
 
   it("imports typed profile strings into the authoritative config without legacy storage", async () => {

@@ -188,19 +188,51 @@ function parseCommand(input) {
 function registerCommands(pi, manager, _save, _load, openTui = async () => {
 }, sync = async () => {
 }) {
-  pi.registerCommand("profiles:sync", {
-    description: "Sync PiProfiles with managed agents folder",
-    async handler(_args, ctx) {
-      try {
-        await sync(ctx);
-      } catch (error) {
-        ctx.ui.notify(
-          error instanceof Error ? error.message : String(error),
-          "error"
-        );
+  const handleAction = async (args, ctx) => {
+    manager.setContext(ctx);
+    const { verb, name } = parseCommand(args);
+    try {
+      if (verb === "list") {
+        return ctx.ui.notify(manager.names().join("\n") || "No profiles");
       }
+      if (verb === "status") {
+        const active = manager.state.get(ctx.sessionManager.getSessionId());
+        return ctx.ui.notify(active?.profile ?? "none");
+      }
+      if (verb === "sync") {
+        await sync(ctx);
+        return;
+      }
+      if (verb === "use") {
+        if (!name) {
+          return ctx.ui.notify("Usage: /profiles use <name>", "error");
+        }
+        await manager.use(name);
+        return;
+      }
+      if (verb === "save") {
+        if (!name) {
+          return ctx.ui.notify("Usage: /profiles save <name>", "error");
+        }
+        await _save(ctx, name);
+        return;
+      }
+      if (verb === "next") {
+        await manager.next();
+        return;
+      }
+      if (verb === "off") {
+        await manager.off();
+        return;
+      }
+      return openTui(ctx);
+    } catch (error) {
+      ctx.ui.notify(
+        error instanceof Error ? error.message : String(error),
+        "error"
+      );
     }
-  });
+  };
   pi.registerCommand("profiles", {
     description: "Manage SDD model profiles",
     getArgumentCompletions: (prefix) => {
@@ -216,52 +248,14 @@ function registerCommands(pi, manager, _save, _load, openTui = async () => {
       const namePrefix = nameParts.join(" ");
       return manager.names().filter((name) => name.startsWith(namePrefix)).map((value) => ({ value, label: value }));
     },
-    async handler(args, ctx) {
-      manager.setContext(ctx);
-      const { verb, name } = parseCommand(args);
-      try {
-        if (verb === "list") {
-          return ctx.ui.notify(manager.names().join("\n") || "No profiles");
-        }
-        if (verb === "status") {
-          const active = manager.state.get(ctx.sessionManager.getSessionId());
-          return ctx.ui.notify(active?.profile ?? "none");
-        }
-        if (verb === "sync") {
-          await sync(ctx);
-          return;
-        }
-        if (verb === "use") {
-          if (!name) {
-            return ctx.ui.notify("Usage: /profiles use <name>", "error");
-          }
-          await manager.use(name);
-          return;
-        }
-        if (verb === "save") {
-          if (!name) {
-            return ctx.ui.notify("Usage: /profiles save <name>", "error");
-          }
-          await _save(ctx, name);
-          return;
-        }
-        if (verb === "next") {
-          await manager.next();
-          return;
-        }
-        if (verb === "off") {
-          await manager.off();
-          return;
-        }
-        return openTui(ctx);
-      } catch (error) {
-        ctx.ui.notify(
-          error instanceof Error ? error.message : String(error),
-          "error"
-        );
-      }
-    }
+    handler: handleAction
   });
+  for (const action of COMMAND_ACTIONS) {
+    pi.registerCommand(`profiles:${action}`, {
+      description: `PiProfiles: ${action}`,
+      handler: (args, ctx) => handleAction(`${action} ${args}`.trim(), ctx)
+    });
+  }
 }
 
 // src/sync.ts
@@ -671,12 +665,23 @@ function prompt(ctx, title, initial = "") {
     };
   }, { overlay: true });
 }
-function showCopyConfirmation(ctx, message) {
+function showExportDialog(ctx, profileName, exportString, copyPromise) {
   return ctx.ui.custom((tui, theme, _kb, done) => {
     const container = new Container();
+    const statusText = new Text(theme.fg("accent", theme.bold(`Copying profile '${profileName}' to clipboard...`)), 1, 0);
     container.addChild(new DynamicBorder((value) => theme.fg("accent", value)));
-    container.addChild(new Text(theme.fg("accent", theme.bold(message)), 1, 0));
+    container.addChild(statusText);
+    container.addChild(new Text(theme.fg("accent", exportString), 1, 0));
     container.addChild(new DynamicBorder((value) => theme.fg("accent", value)));
+    copyPromise.then(() => {
+      statusText.setText(theme.fg("accent", theme.bold(`Copied profile '${profileName}' to clipboard.`)));
+      container.invalidate();
+      tui.requestRender();
+    }).catch((error) => {
+      statusText.setText(theme.fg("error", theme.bold(`Failed to copy profile '${profileName}' to clipboard: ${error instanceof Error ? error.message : String(error)}`)));
+      container.invalidate();
+      tui.requestRender();
+    });
     return {
       render: (width) => container.render(width),
       invalidate: () => container.invalidate(),
@@ -999,12 +1004,9 @@ function extension(pi) {
             favorite: selected === manager.config.defaultProfile
           }
         })).toString("base64");
-        try {
-          await copyToClipboard(`piprofile:1:${encoded}`);
-          await showCopyConfirmation(ctx, `Copied profile '${selected}' to clipboard.`);
-        } catch (error) {
-          ctx.ui.notify(`Failed to copy profile '${selected}' to clipboard: ${error instanceof Error ? error.message : String(error)}`, "error");
-        }
+        const exportString = `piprofile:1:${encoded}`;
+        const copyPromise = copyToClipboard(exportString);
+        await showExportDialog(ctx, selected, exportString, copyPromise);
         continue;
       }
       if (action === "delete") {
