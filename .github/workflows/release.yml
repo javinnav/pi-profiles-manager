@@ -23,7 +23,6 @@ jobs:
         with:
           node-version: 22.19.0
           cache: npm
-          registry-url: 'https://registry.npmjs.org'
       - name: Verify package version
         shell: bash
         run: |
