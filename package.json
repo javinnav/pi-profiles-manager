@@ -1,46 +1,53 @@
 {
-  "name": "pi-profiles-manager",
-  "version": "1.0.1",
-  "description": "Interactive SDD model profile management built natively for the Pi Coding Agent.",
-  "main": "index.ts",
-  "type": "module",
-  "files": [
-    "index.ts",
-    "src"
-  ],
-  "scripts": {
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
-    "package-check": "npm pack --dry-run"
-  },
-  "engines": {
-    "node": ">=22.19.0"
-  },
-  "keywords": [
-    "pi-agent-extension",
-    "pi-package"
-  ],
-  "pi": {
-    "extensions": [
-      "index.ts"
-    ]
-  },
-  "author": "javinnav",
-  "license": "MIT",
-  "homepage": "https://github.com/javinnav/pi-profiles-manager#readme",
-  "bugs": {
-    "url": "https://github.com/javinnav/pi-profiles-manager/issues"
-  },
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/javinnav/pi-profiles-manager.git"
-  },
-  "dependencies": {
-    "@earendil-works/pi-coding-agent": "*",
-    "@earendil-works/pi-tui": "*"
-  },
-  "devDependencies": {
-    "typescript": "^7.0.2",
-    "vitest": "^4.1.11"
-  }
+	"name": "pi-profiles-manager",
+	"version": "1.0.1",
+	"description": "Interactive SDD model profile management built natively for the Pi Coding Agent.",
+	"main": "index.ts",
+	"type": "module",
+	"files": [
+		"index.ts",
+		"src"
+	],
+	"scripts": {
+		"dev": "npm run build -- --watch",
+		"build": "tsup index.ts --format esm --clean",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"lint": "biome check .",
+		"format": "biome format --write .",
+		"package-check": "node -e \"const pkg = require('./package.json'); if (!pkg.pi || !pkg.pi.extensions) { console.error('Missing pi.extensions in package.json'); process.exit(1); }\""
+	},
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"keywords": [
+		"pi-agent-extension",
+		"pi-package"
+	],
+	"pi": {
+		"extensions": [
+			"index.ts"
+		]
+	},
+	"author": "javinnav",
+	"license": "MIT",
+	"homepage": "https://github.com/javinnav/pi-profiles-manager#readme",
+	"bugs": {
+		"url": "https://github.com/javinnav/pi-profiles-manager/issues"
+	},
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/javinnav/pi-profiles-manager.git"
+	},
+	"dependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"@earendil-works/pi-tui": "*"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.5.11",
+		"tsup": "^8.5.1",
+		"typescript": "^7.0.2",
+		"vitest": "^4.1.11"
+	}
 }
