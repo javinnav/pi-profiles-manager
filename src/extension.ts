@@ -75,6 +75,35 @@ function chooser(ctx: ContextLike, title: string, items: Item[], height = 10): P
   }, { overlay: true });
 }
 
+async function selectSubagents(ctx: ContextLike, agents: string[]): Promise<string[] | null> {
+  const selected = new Set<string>();
+  while (true) {
+    const choice = await chooser(ctx, "Select subagents to update", [
+      ...agents.map((agent) => ({
+        value: `toggle:${agent}`,
+        label: `${selected.has(agent) ? "☑" : "☐"} ${agent}`,
+        description: "Toggle selection",
+      })),
+      { value: "confirm", label: `Continue with ${selected.size} selected` },
+      { value: "cancel", label: "← Cancel" },
+    ], Math.min(agents.length + 2, 12));
+    if (!choice || choice === "cancel") return null;
+    if (choice === "confirm") return selected.size ? agents.filter((agent) => selected.has(agent)) : null;
+    if (!choice.startsWith("toggle:")) continue;
+    const agent = choice.slice("toggle:".length);
+    if (!agents.includes(agent)) continue;
+    if (selected.has(agent)) selected.delete(agent);
+    else selected.add(agent);
+  }
+}
+
+function confirmBulkUpdate(ctx: ContextLike, action: string, agents: string[], value: string): Promise<string | null> {
+  return chooser(ctx, `Review bulk ${action} update`, [
+    { value: "confirm", label: "✓ Apply update", description: `Affected subagents: ${agents.join(", ")} → ${value}` },
+    { value: "cancel", label: "← Cancel (no changes)" },
+  ], 2);
+}
+
 function searchableChooser(ctx: ContextLike, title: string, items: Item[]): Promise<string | null> {
   return (ctx.ui.custom as any)((tui: any, theme: any, kb: any, done: any) => {
     const container = new Container() as any;
@@ -378,10 +407,32 @@ export default function extension(pi: PiLike) {
       const selected = await chooser(ctx, `Edit Profile '${name}'`, [
         { value: "orchestrator", label: "orchestrator", description: routeDescription(profile.orchestrator) },
         ...agents.map((agent) => ({ value: agent, label: agent, description: routeDescription(profile.agents?.[agent]) })),
+        { value: "bulk-model", label: "✎ Change selected subagents' models" },
+        { value: "bulk-thinking", label: "✎ Change selected subagents' thinking" },
         { value: "__ADD__", label: "➕ Add Subagent" },
         { value: "back", label: "← Back" },
       ]);
       if (!selected || selected === "back") return;
+      if (selected === "bulk-model" || selected === "bulk-thinking") {
+        const targets = await selectSubagents(ctx, agents);
+        if (!targets) continue;
+        const action = selected === "bulk-model" ? "model" : "thinking";
+        const value = selected === "bulk-model"
+          ? await selectModel(ctx, "Select Model for selected subagents", {})
+          : await chooser(ctx, "Thinking for selected subagents", ["inherit", "off", "minimal", "low", "medium", "high", "xhigh", "max"].map((option) => ({ value: option, label: option })), 8);
+        if (!value) continue;
+        const preview = typeof value === "string" ? value : routeDescription(value);
+        if (await confirmBulkUpdate(ctx, action, targets, preview) !== "confirm") continue;
+        const updatedAgents = { ...profile.agents };
+        for (const agent of targets) {
+          const route = updatedAgents[agent] ?? {};
+          updatedAgents[agent] = typeof value === "string"
+            ? { ...route, effort: value as ThinkingLevel }
+            : { ...route, model: value.model };
+        }
+        await persist({ ...manager.config, profiles: { ...manager.config.profiles, [name]: { ...profile, agents: updatedAgents } } });
+        continue;
+      }
       let agent = selected;
       if (agent === "__ADD__") {
         const entered = await prompt(ctx, "Subagent Name (e.g. sdd-apply):");
