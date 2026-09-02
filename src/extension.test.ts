@@ -72,7 +72,7 @@ describe("package extension", () => {
     vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
       version: 1,
       defaultProfile: "existing",
-      shortcut: "ctrl+tab",
+      shortcut: "ctrl+shift+p",
       cycle: ["existing"],
       profiles: {
         existing: {
@@ -107,7 +107,7 @@ describe("package extension", () => {
     const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
     expect(saved).toMatchObject({
       defaultProfile: "existing",
-      shortcut: "ctrl+tab",
+      shortcut: "ctrl+shift+p",
       cycle: ["existing", "new-profile"],
     });
     expect(saved.profiles["new-profile"]).toEqual({

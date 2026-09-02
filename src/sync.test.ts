@@ -7,7 +7,7 @@ function config(): Config {
     version: 1,
     defaultProfile: "alpha",
     cycle: ["alpha", "beta"],
-    shortcut: "ctrl+tab",
+    shortcut: "ctrl+shift+p",
     profiles: {
       alpha: {
         order: 0,
@@ -70,7 +70,7 @@ describe("reconcileProfileAgents", () => {
     expect(result.config).toMatchObject({
       defaultProfile: "alpha",
       cycle: ["alpha", "beta"],
-      shortcut: "ctrl+tab",
+      shortcut: "ctrl+shift+p",
       profiles: {
         alpha: {
           order: 0,

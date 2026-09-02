@@ -22,7 +22,7 @@ describe("normalizeAgent", () => {
 
 describe("supportedShortcut", () => {
   it("accepts valid chords", () => {
-    expect(supportedShortcut("ctrl+tab")).toBe(true);
+    expect(supportedShortcut("ctrl+shift+p")).toBe(true);
     expect(supportedShortcut("ctrl+alt+p")).toBe(true);
     expect(supportedShortcut("alt+shift+f12")).toBe(true);
     expect(supportedShortcut("meta+ctrl+a")).toBe(true);

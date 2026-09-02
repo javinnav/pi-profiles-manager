@@ -4,209 +4,286 @@ import { ProfileManager } from "./profile-manager.js";
 import type { Config, ContextLike, PiLike } from "./types.js";
 
 function mockPi(): PiLike {
-  return {
-    appendEntry: vi.fn(),
-    getThinkingLevel: vi.fn(() => "medium" as const),
-    registerCommand: vi.fn() as any,
-    registerShortcut: vi.fn() as any,
-    setModel: vi.fn(async () => true),
-    setThinkingLevel: vi.fn(),
-    on: vi.fn() as any,
-  };
+	return {
+		appendEntry: vi.fn(),
+		getThinkingLevel: vi.fn(() => "medium" as const),
+		registerCommand: vi.fn() as any,
+		registerShortcut: vi.fn() as any,
+		setModel: vi.fn(async () => true),
+		setThinkingLevel: vi.fn(),
+		on: vi.fn() as any,
+	};
 }
 
 function mockCtx(sessionId = "session-1"): ContextLike {
-  return {
-    sessionManager: {
-      getSessionId: () => sessionId,
-      getBranch: () => [],
-    },
-    ui: { setStatus: vi.fn(), notify: vi.fn() },
-    modelRegistry: { find: vi.fn(), getAvailable: vi.fn() },
-    model: undefined,
-    cwd: "/tmp",
-    isProjectTrusted: () => false,
-  } as unknown as ContextLike;
+	return {
+		sessionManager: {
+			getSessionId: () => sessionId,
+			getBranch: () => [],
+		},
+		ui: { setStatus: vi.fn(), notify: vi.fn() },
+		modelRegistry: { find: vi.fn(), getAvailable: vi.fn() },
+		model: undefined,
+		cwd: "/tmp",
+		isProjectTrusted: () => false,
+	} as unknown as ContextLike;
 }
 
 function configWithProfiles(names: string[]): Config {
-  return {
-    version: 1,
-    profiles: Object.fromEntries(names.map((name, i) => [name, { order: i }])),
-  };
+	return {
+		version: 1,
+		profiles: Object.fromEntries(names.map((name, i) => [name, { order: i }])),
+	};
 }
 
 describe("parseCommand", () => {
-  it("parses verb and name", () => {
-    expect(parseCommand("use my-profile")).toEqual({
-      verb: "use",
-      name: "my-profile",
-    });
-  });
+	it("parses verb and name", () => {
+		expect(parseCommand("use my-profile")).toEqual({
+			verb: "use",
+			name: "my-profile",
+		});
+	});
 
-  it("lowercases verb", () => {
-    expect(parseCommand("NEXT")).toEqual({ verb: "next", name: "" });
-  });
+	it("lowercases verb", () => {
+		expect(parseCommand("NEXT")).toEqual({ verb: "next", name: "" });
+	});
 
-  it("handles empty input", () => {
-    expect(parseCommand("")).toEqual({ verb: "", name: "" });
-  });
+	it("handles empty input", () => {
+		expect(parseCommand("")).toEqual({ verb: "", name: "" });
+	});
 
-  it("handles single verb", () => {
-    expect(parseCommand("list")).toEqual({ verb: "list", name: "" });
-  });
+	it("handles single verb", () => {
+		expect(parseCommand("list")).toEqual({ verb: "list", name: "" });
+	});
 });
 
 describe("registerCommands", () => {
-  it("registers /profiles command", () => {
-    const pi = mockPi();
-    const mgr = new ProfileManager(pi, mockCtx());
-    mgr.setConfig(configWithProfiles([]));
+	it("registers /profiles command", () => {
+		const pi = mockPi();
+		const mgr = new ProfileManager(pi, mockCtx());
+		mgr.setConfig(configWithProfiles([]));
 
-    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
-    expect(pi.registerCommand).toHaveBeenCalled();
-  });
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
+		expect(pi.registerCommand).toHaveBeenCalledWith(
+			"profiles",
+			expect.any(Object),
+		);
+	});
 
-  it("list subcommand notifies profile names", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    mgr.setConfig(configWithProfiles(["alpha", "beta"]));
+	it("registers /profiles:sync alias command", () => {
+		const pi = mockPi();
+		const mgr = new ProfileManager(pi, mockCtx());
+		mgr.setConfig(configWithProfiles([]));
 
-    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
+		expect(pi.registerCommand).toHaveBeenCalledWith(
+			"profiles:sync",
+			expect.any(Object),
+		);
+	});
 
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("list", ctx);
+	it("completes actions first and profile names after use or save", () => {
+		const pi = mockPi();
+		const mgr = new ProfileManager(pi, mockCtx());
+		mgr.setConfig(configWithProfiles(["alpha", "team profile"]));
 
-    expect(ctx.ui.notify).toHaveBeenCalledWith("alpha\nbeta");
-  });
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
 
-  it("status subcommand notifies active profile", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    mgr.setConfig(configWithProfiles(["test"]));
+		const completions = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].getArgumentCompletions;
+		expect(completions("s")).toEqual([
+			{ value: "status", label: "status" },
+			{ value: "sync", label: "sync" },
+			{ value: "save", label: "save" },
+		]);
+		expect(completions("use team p")).toEqual([
+			{ value: "team profile", label: "team profile" },
+		]);
+		expect(completions("save alpha")).toEqual([
+			{ value: "alpha", label: "alpha" },
+		]);
+	});
 
-    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
+	it("list subcommand notifies profile names", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		mgr.setConfig(configWithProfiles(["alpha", "beta"]));
 
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("status", ctx);
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
 
-    expect(ctx.ui.notify).toHaveBeenCalledWith("none");
-  });
+		const handler = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].handler;
+		await handler("list", ctx);
 
-  it("use subcommand activates profile", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    mgr.setConfig(configWithProfiles(["test"]));
+		expect(ctx.ui.notify).toHaveBeenCalledWith("alpha\nbeta");
+	});
 
-    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
+	it("status subcommand notifies active profile", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		mgr.setConfig(configWithProfiles(["test"]));
 
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("use test", ctx);
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
 
-    expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "test");
-  });
+		const handler = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].handler;
+		await handler("status", ctx);
 
-  it("use without name notifies error", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    mgr.setConfig(configWithProfiles([]));
+		expect(ctx.ui.notify).toHaveBeenCalledWith("none");
+	});
 
-    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
+	it("use subcommand activates profile", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		mgr.setConfig(configWithProfiles(["test"]));
 
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("use", ctx);
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
 
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      "Usage: /profiles use <name>",
-      "error",
-    );
-  });
+		const handler = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].handler;
+		await handler("use test", ctx);
 
-  it("save subcommand delegates a named snapshot without opening the TUI", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    const save = vi.fn(async () => {});
-    const openTui = vi.fn(async () => {});
-    mgr.setConfig(configWithProfiles([]));
+		expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "test");
+	});
 
-    registerCommands(pi, mgr, save as any, vi.fn() as any, openTui);
+	it("use without name notifies error", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		mgr.setConfig(configWithProfiles([]));
 
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("save snapshot", ctx);
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
 
-    expect(save).toHaveBeenCalledWith(ctx, "snapshot");
-    expect(openTui).not.toHaveBeenCalled();
-  });
+		const handler = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].handler;
+		await handler("use", ctx);
 
-  it("save without a name notifies usage", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    const save = vi.fn(async () => {});
-    mgr.setConfig(configWithProfiles([]));
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			"Usage: /profiles use <name>",
+			"error",
+		);
+	});
 
-    registerCommands(pi, mgr, save as any, vi.fn() as any);
+	it("save subcommand delegates a named snapshot without opening the TUI", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		const save = vi.fn(async () => {});
+		const openTui = vi.fn(async () => {});
+		mgr.setConfig(configWithProfiles([]));
 
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("save", ctx);
+		registerCommands(pi, mgr, save as any, vi.fn() as any, openTui);
 
-    expect(save).not.toHaveBeenCalled();
-    expect(ctx.ui.notify).toHaveBeenCalledWith(
-      "Usage: /profiles save <name>",
-      "error",
-    );
-  });
+		const handler = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].handler;
+		await handler("save snapshot", ctx);
 
-  it("off subcommand deactivates", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    mgr.setConfig(configWithProfiles(["test"]));
+		expect(save).toHaveBeenCalledWith(ctx, "snapshot");
+		expect(openTui).not.toHaveBeenCalled();
+	});
 
-    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
+	it("save without a name notifies usage", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		const save = vi.fn(async () => {});
+		mgr.setConfig(configWithProfiles([]));
 
-    // First activate
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("use test", ctx);
+		registerCommands(pi, mgr, save as any, vi.fn() as any);
 
-    // Then deactivate
-    await handler("off", ctx);
-    expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", undefined);
-  });
+		const handler = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].handler;
+		await handler("save", ctx);
 
-  it("next subcommand cycles", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    mgr.setConfig(configWithProfiles(["a", "b"]));
+		expect(save).not.toHaveBeenCalled();
+		expect(ctx.ui.notify).toHaveBeenCalledWith(
+			"Usage: /profiles save <name>",
+			"error",
+		);
+	});
 
-    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
+	it("off subcommand deactivates", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		mgr.setConfig(configWithProfiles(["test"]));
 
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("next", ctx);
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
 
-    expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "a");
-  });
+		// First activate
+		const handler = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].handler;
+		await handler("use test", ctx);
 
-  it("sync subcommand delegates without opening the TUI", async () => {
-    const pi = mockPi();
-    const ctx = mockCtx();
-    const mgr = new ProfileManager(pi, ctx);
-    const sync = vi.fn(async () => {});
-    const openTui = vi.fn(async () => {});
-    mgr.setConfig(configWithProfiles([]));
+		// Then deactivate
+		await handler("off", ctx);
+		expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", undefined);
+	});
 
-    registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any, openTui, sync);
+	it("next subcommand cycles", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		mgr.setConfig(configWithProfiles(["a", "b"]));
 
-    const handler = (pi.registerCommand as any).mock.calls[0][1].handler;
-    await handler("sync", ctx);
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
 
-    expect(sync).toHaveBeenCalledWith(ctx);
-    expect(openTui).not.toHaveBeenCalled();
-  });
+		const handler = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		)[1].handler;
+		await handler("next", ctx);
+
+		expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "a");
+	});
+
+	it("sync subcommand delegates without opening the TUI", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		const sync = vi.fn(async () => {});
+		const openTui = vi.fn(async () => {});
+		mgr.setConfig(configWithProfiles([]));
+
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any, openTui, sync);
+
+		const callArgs = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles",
+		);
+		const handler = callArgs[1].handler;
+		await handler("sync", ctx);
+
+		expect(sync).toHaveBeenCalledWith(ctx);
+		expect(openTui).not.toHaveBeenCalled();
+	});
+
+	it("profiles:sync alias command delegates directly to sync without opening TUI", async () => {
+		const pi = mockPi();
+		const ctx = mockCtx();
+		const mgr = new ProfileManager(pi, ctx);
+		const sync = vi.fn(async () => {});
+		const openTui = vi.fn(async () => {});
+		mgr.setConfig(configWithProfiles([]));
+
+		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any, openTui, sync);
+
+		const callArgs = (pi.registerCommand as any).mock.calls.find(
+			(c: any[]) => c[0] === "profiles:sync",
+		);
+		const handler = callArgs[1].handler;
+		await handler("", ctx);
+
+		expect(sync).toHaveBeenCalledWith(ctx);
+		expect(openTui).not.toHaveBeenCalled();
+	});
 });
