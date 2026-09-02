@@ -177,19 +177,22 @@ function prompt(ctx: ContextLike, title: string, initial = ""): Promise<string |
 function showExportDialog(ctx: ContextLike, profileName: string, exportString: string, copyPromise: Promise<void>): Promise<void> {
   return (ctx.ui.custom as (factory: unknown, options?: unknown) => Promise<void>)((tui: { requestRender: () => void }, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }, _kb: unknown, done: (value: void) => void) => {
     const container = new Container() as { addChild: (child: unknown) => void; render: (width: number) => unknown; invalidate: () => void };
-    const statusText = new Text(theme.fg("accent", theme.bold(`Copying profile '${profileName}' to clipboard...`)), 1, 0);
+    const statusText = new Text(theme.fg("accent", "Copying to clipboard..."), 1, 0);
 
     container.addChild(new DynamicBorder((value: string) => theme.fg("accent", value)));
+    container.addChild(new Text(theme.fg("accent", theme.bold(`📤 Profile Export: '${profileName}'`)), 1, 0));
     container.addChild(statusText);
+    container.addChild(new Text(theme.fg("dim", "Select string below to copy:"), 1, 0));
     container.addChild(new Text(theme.fg("accent", exportString), 1, 0));
+    container.addChild(new Text(theme.fg("dim", "[ Press any key or Esc to close ]"), 1, 0));
     container.addChild(new DynamicBorder((value: string) => theme.fg("accent", value)));
 
     copyPromise.then(() => {
-      statusText.setText(theme.fg("accent", theme.bold(`Copied profile '${profileName}' to clipboard.`)));
+      statusText.setText(theme.fg("accent", "✓ Copy command sent to terminal clipboard."));
       container.invalidate();
       tui.requestRender();
     }).catch((error) => {
-      statusText.setText(theme.fg("error", theme.bold(`Failed to copy profile '${profileName}' to clipboard: ${error instanceof Error ? error.message : String(error)}`)));
+      statusText.setText(theme.fg("error", `Failed to copy: ${error instanceof Error ? error.message : String(error)}`));
       container.invalidate();
       tui.requestRender();
     });
@@ -198,7 +201,7 @@ function showExportDialog(ctx: ContextLike, profileName: string, exportString: s
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput: (data: string) => {
-        if (matchesKey(data, "return") || matchesKey(data, "escape")) done();
+        done();
         tui.requestRender();
       },
     };

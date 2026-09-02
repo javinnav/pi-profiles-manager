@@ -266,7 +266,7 @@ describe("package extension", () => {
     );
   });
 
-  it.each(["return", "escape"])(
+  it.each(["return", "escape", "a", "space"])(
     "keeps export string visible until %s dismisses it",
     async (dismissKey) => {
       const syncFs = await import("node:fs");
@@ -321,12 +321,27 @@ describe("package extension", () => {
         "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
       );
       expect(tuiState.texts).toContainEqual([
+        "📤 Profile Export: 'alpha'",
+        1,
+        0,
+      ]);
+      expect(tuiState.texts).toContainEqual([
+        "Select string below to copy:",
+        1,
+        0,
+      ]);
+      expect(tuiState.texts).toContainEqual([
         "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
         1,
         0,
       ]);
       expect(tuiState.texts).toContainEqual([
-        expect.stringContaining("Copied profile 'alpha' to clipboard"),
+        "[ Press any key or Esc to close ]",
+        1,
+        0,
+      ]);
+      expect(tuiState.texts).toContainEqual([
+        "✓ Copy command sent to terminal clipboard.",
         1,
         0,
       ]);
@@ -343,7 +358,7 @@ describe("package extension", () => {
       expect(finishConfirmation).toBeDefined();
       expect(handlerSettled).toBe(true);
       expect(ctx.ui.notify).not.toHaveBeenCalledWith(
-        "Copied profile 'alpha' to clipboard.",
+        "✓ Copy command sent to terminal clipboard.",
         "info",
       );
     },
@@ -397,12 +412,17 @@ describe("package extension", () => {
     await vi.waitFor(() => expect(custom).toHaveBeenCalledTimes(3));
 
     expect(tuiState.texts).toContainEqual([
+      "📤 Profile Export: 'alpha'",
+      1,
+      0,
+    ]);
+    expect(tuiState.texts).toContainEqual([
       "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
       1,
       0,
     ]);
     expect(tuiState.texts).toContainEqual([
-      expect.stringContaining("Failed to copy profile 'alpha' to clipboard"),
+      expect.stringContaining("Failed to copy: clipboard unavailable"),
       1,
       0,
     ]);
