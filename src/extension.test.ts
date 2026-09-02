@@ -702,12 +702,11 @@ describe("package extension", () => {
 
       await handler("", ctx);
 
-      expect(fs.writeFile).not.toHaveBeenCalled();
-    }
-      }
-    });
+          expect(fs.writeFile).not.toHaveBeenCalled();
+        }
+      });
 
-it("restores a cwd selection before falling back to the favorite", async () => {
+      it("restores a cwd selection before falling back to the favorite", async () => {
     const syncFs = await import("node:fs");
     vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
       version: 1,
