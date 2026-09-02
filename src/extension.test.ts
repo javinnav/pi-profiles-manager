@@ -610,4 +610,98 @@ describe("package extension", () => {
 
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "alpha");
   });
+
+  it("bulk-updates only explicitly selected subagent models after a preview confirmation", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: {
+        alpha: {
+          order: 0,
+          orchestrator: { effort: "medium" },
+          agents: {
+            reviewer: { model: { provider: "openai", id: "gpt-4" }, effort: "low" },
+            writer: { effort: "medium" },
+            untouched: { model: { provider: "anthropic", id: "claude" }, effort: "high" },
+          },
+        },
+        beta: { order: 1, agents: { reviewer: { effort: "low" } } },
+      },
+    }));
+    const fs = await import("node:fs/promises");
+    vi.mocked(fs.writeFile).mockClear();
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const custom = vi.fn()
+      .mockResolvedValueOnce("alpha")
+      .mockResolvedValueOnce("edit")
+      .mockResolvedValueOnce("bulk-model")
+      .mockResolvedValueOnce("toggle:reviewer")
+      .mockResolvedValueOnce("toggle:writer")
+      .mockResolvedValueOnce("confirm")
+      .mockResolvedValueOnce("openai/gpt-5")
+      .mockResolvedValueOnce("confirm")
+      .mockResolvedValueOnce(null);
+    const ctx = {
+      modelRegistry: { find: vi.fn(), getAvailable: vi.fn(async () => []) },
+      sessionManager: { getSessionId: () => "session-1" },
+      ui: { custom, notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("", ctx);
+
+    expect(fs.writeFile).toHaveBeenCalledTimes(1);
+    const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
+    expect(saved.profiles.alpha.agents).toEqual({
+      reviewer: { model: { provider: "openai", id: "gpt-5" }, effort: "low" },
+      writer: { model: { provider: "openai", id: "gpt-5" }, effort: "medium" },
+      untouched: { model: { provider: "anthropic", id: "claude" }, effort: "high" },
+    });
+    expect(saved.profiles.alpha.orchestrator).toEqual({ effort: "medium" });
+    expect(saved.profiles.beta).toEqual({ order: 1, agents: { reviewer: { effort: "low" } } });
+    tuiState.texts = [];
+    custom.mock.calls[7]![0](
+      { requestRender: vi.fn() },
+      { fg: (_color: string, text: string) => text, bold: (text: string) => text },
+      {},
+      vi.fn(),
+    );
+    expect(tuiState.texts).toContainEqual(["Review bulk model update", 1, 0]);
+  });
+
+  it("does not persist bulk thinking changes when selection, value, or confirmation is cancelled", async () => {
+    const fs = await import("node:fs/promises");
+    for (const responses of [
+      ["alpha", "edit", "bulk-thinking", null],
+      ["alpha", "edit", "bulk-thinking", "toggle:reviewer", null],
+      ["alpha", "edit", "bulk-thinking", "toggle:reviewer", "confirm", "high", null],
+    ]) {
+      const syncFs = await import("node:fs");
+      vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+        version: 1,
+        profiles: { alpha: { order: 0, agents: { reviewer: { effort: "low" } } } },
+      }));
+      vi.mocked(fs.writeFile).mockClear();
+      const pi = mockPi();
+      extension(pi);
+      const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+        ([name]: [string]) => name === "profiles",
+      )[1].handler as (args: string, ctx: any) => Promise<void>;
+      const custom = vi.fn();
+      for (const response of responses) custom.mockResolvedValueOnce(response);
+      custom.mockResolvedValueOnce(null);
+      const ctx = {
+        modelRegistry: { find: vi.fn() },
+        sessionManager: { getSessionId: () => "session-1" },
+        ui: { custom, notify: vi.fn(), setStatus: vi.fn() },
+      };
+
+      await handler("", ctx);
+
+      expect(fs.writeFile).not.toHaveBeenCalled();
+    }
+  });
 });
