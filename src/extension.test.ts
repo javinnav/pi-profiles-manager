@@ -601,7 +601,8 @@ describe("package extension", () => {
       ([event]: [string]) => event === "session_start",
     )[1] as (_event: unknown, ctx: any) => Promise<void>;
     const ctx = {
-      sessionManager: { getSessionId: () => "session-1" },
+      cwd: "/workspace/without-selection",
+      sessionManager: { getSessionId: () => "session-1", getBranch: () => [] },
       modelRegistry: { find: vi.fn() },
       ui: { notify: vi.fn(), setStatus: vi.fn() },
     };
@@ -609,5 +610,46 @@ describe("package extension", () => {
     await start({}, ctx);
 
     expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "alpha");
+  });
+
+  it("restores a cwd selection before falling back to the favorite", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      defaultProfile: "favorite",
+      profiles: {
+        favorite: { order: 0, orchestrator: { effort: "low" } },
+        selected: { order: 1, orchestrator: { effort: "high" } },
+      },
+    }));
+    const pi = mockPi();
+    extension(pi);
+    const start = (vi.mocked(pi.on).mock.calls as any[]).find(
+      ([event]: [string]) => event === "session_start",
+    )[1] as (_event: unknown, ctx: any) => Promise<void>;
+    const ctx = {
+      cwd: "/workspace/project",
+      sessionManager: {
+        getSessionId: () => "session-1",
+        getBranch: () => [{
+          type: "custom",
+          customType: "pi-profiles:active",
+          data: {
+            profile: "selected",
+            route: {},
+            baseline: {},
+            activatedAt: "2026-01-01T00:00:00.000Z",
+            cwd: "/workspace/project",
+          },
+        }],
+      },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await start({}, ctx);
+
+    expect(ctx.ui.setStatus).toHaveBeenCalledWith("pi-profiles", "selected");
+    expect(pi.setThinkingLevel).toHaveBeenCalledWith("high");
   });
 });
