@@ -7,7 +7,7 @@ import {
   DynamicBorder,
   getAgentDir
 } from "@earendil-works/pi-coding-agent";
-import { Container, Input, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
+import { Container, Input, SelectList, Text } from "@earendil-works/pi-tui";
 
 // src/constants.ts
 var CONFIG_VERSION = 1;
@@ -668,17 +668,20 @@ function prompt(ctx, title, initial = "") {
 function showExportDialog(ctx, profileName, exportString, copyPromise) {
   return ctx.ui.custom((tui, theme, _kb, done) => {
     const container = new Container();
-    const statusText = new Text(theme.fg("accent", theme.bold(`Copying profile '${profileName}' to clipboard...`)), 1, 0);
+    const statusText = new Text(theme.fg("accent", "Copying to clipboard..."), 1, 0);
     container.addChild(new DynamicBorder((value) => theme.fg("accent", value)));
+    container.addChild(new Text(theme.fg("accent", theme.bold(`\u{1F4E4} Profile Export: '${profileName}'`)), 1, 0));
     container.addChild(statusText);
+    container.addChild(new Text(theme.fg("dim", "Select string below to copy:"), 1, 0));
     container.addChild(new Text(theme.fg("accent", exportString), 1, 0));
+    container.addChild(new Text(theme.fg("dim", "[ Press any key or Esc to close ]"), 1, 0));
     container.addChild(new DynamicBorder((value) => theme.fg("accent", value)));
     copyPromise.then(() => {
-      statusText.setText(theme.fg("accent", theme.bold(`Copied profile '${profileName}' to clipboard.`)));
+      statusText.setText(theme.fg("accent", "\u2713 Copy command sent to terminal clipboard."));
       container.invalidate();
       tui.requestRender();
     }).catch((error) => {
-      statusText.setText(theme.fg("error", theme.bold(`Failed to copy profile '${profileName}' to clipboard: ${error instanceof Error ? error.message : String(error)}`)));
+      statusText.setText(theme.fg("error", `Failed to copy: ${error instanceof Error ? error.message : String(error)}`));
       container.invalidate();
       tui.requestRender();
     });
@@ -686,7 +689,7 @@ function showExportDialog(ctx, profileName, exportString, copyPromise) {
       render: (width) => container.render(width),
       invalidate: () => container.invalidate(),
       handleInput: (data) => {
-        if (matchesKey(data, "return") || matchesKey(data, "escape")) done();
+        done();
         tui.requestRender();
       }
     };
