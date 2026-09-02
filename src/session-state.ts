@@ -1,7 +1,8 @@
+import { isAbsolute, resolve } from "node:path";
 import { ACTIVE_ENTRY_TYPE } from "./constants.js";
 import type { ActiveSnapshot, ContextLike, PiLike, Route } from "./types.js";
 
-type Marker = ActiveSnapshot | { off: true };
+type Marker = ActiveSnapshot | { off: true; cwd?: string };
 
 const object = (value: unknown): value is Record<string, unknown> =>
   !!value && typeof value === "object" && !Array.isArray(value);
@@ -27,8 +28,13 @@ function validSnapshot(data: unknown): data is ActiveSnapshot {
     !!data.profile &&
     validRoute(data.route) &&
     validRoute(data.baseline) &&
-    typeof data.activatedAt === "string"
+    typeof data.activatedAt === "string" &&
+    (data.cwd === undefined || typeof data.cwd === "string")
   );
+}
+
+function normalizedCwd(value: unknown): string | undefined {
+  return typeof value === "string" && isAbsolute(value) ? resolve(value) : undefined;
 }
 
 export class SessionState {
@@ -57,10 +63,13 @@ export class SessionState {
     const id = ctx.sessionManager.getSessionId();
     if (!id) return false;
 
-    try {
-      pi.appendEntry(ACTIVE_ENTRY_TYPE, snapshot);
-    } catch {
-      // Graceful degradation: memory-only
+    const cwd = normalizedCwd(ctx.cwd);
+    if (cwd) {
+      try {
+        pi.appendEntry(ACTIVE_ENTRY_TYPE, { ...snapshot, cwd });
+      } catch {
+        // Graceful degradation: memory-only
+      }
     }
 
     this.off.delete(id);
@@ -72,10 +81,13 @@ export class SessionState {
     const id = ctx.sessionManager.getSessionId();
     if (!id) return false;
 
-    try {
-      pi.appendEntry(ACTIVE_ENTRY_TYPE, { off: true });
-    } catch {
-      // Graceful degradation: memory-only
+    const cwd = normalizedCwd(ctx.cwd);
+    if (cwd) {
+      try {
+        pi.appendEntry(ACTIVE_ENTRY_TYPE, { off: true, cwd });
+      } catch {
+        // Graceful degradation: memory-only
+      }
     }
 
     this.active.delete(id);
@@ -85,7 +97,8 @@ export class SessionState {
 
   restore(ctx: ContextLike): ActiveSnapshot | undefined {
     const id = ctx.sessionManager.getSessionId();
-    if (!id) return undefined;
+    const cwd = normalizedCwd(ctx.cwd);
+    if (!id || !cwd) return undefined;
 
     let branch: unknown[];
     try {
@@ -104,16 +117,17 @@ export class SessionState {
       }
 
       const marker = entry.data as Marker | undefined;
+      if (!marker || typeof marker !== "object") continue;
+
       if (
-        marker &&
-        typeof marker === "object" &&
         "off" in marker &&
-        (marker as { off: boolean }).off
+        (marker as { off: boolean }).off &&
+        normalizedCwd((marker as { cwd?: unknown }).cwd) === cwd
       ) {
         this.off.add(id);
         return undefined;
       }
-      if (validSnapshot(marker)) {
+      if (validSnapshot(marker) && normalizedCwd(marker.cwd) === cwd) {
         this.active.set(id, marker);
         return marker;
       }

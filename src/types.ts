@@ -42,6 +42,8 @@ export type ActiveSnapshot = {
   /** Explicit profile agent routes applied to the global agent-route store. */
   agentRoutes?: string[];
   activatedAt: string;
+  /** Normalized absolute working directory that owns this journal selection. */
+  cwd?: string;
 };
 
 /** Minimal ExtensionAPI subset this extension needs. */
