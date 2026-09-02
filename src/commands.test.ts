@@ -70,16 +70,27 @@ describe("registerCommands", () => {
 		);
 	});
 
-	it("registers /profiles:sync alias command", () => {
+	it("registers slash-command aliases for every profile action", () => {
 		const pi = mockPi();
 		const mgr = new ProfileManager(pi, mockCtx());
 		mgr.setConfig(configWithProfiles([]));
 
 		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any);
-		expect(pi.registerCommand).toHaveBeenCalledWith(
-			"profiles:sync",
-			expect.any(Object),
-		);
+
+		for (const action of [
+			"list",
+			"status",
+			"sync",
+			"use",
+			"save",
+			"next",
+			"off",
+		]) {
+			expect(pi.registerCommand).toHaveBeenCalledWith(
+				`profiles:${action}`,
+				expect.any(Object),
+			);
+		}
 	});
 
 	it("completes actions first and profile names after use or save", () => {
@@ -267,23 +278,28 @@ describe("registerCommands", () => {
 		expect(openTui).not.toHaveBeenCalled();
 	});
 
-	it("profiles:sync alias command delegates directly to sync without opening TUI", async () => {
+	it("profiles action aliases delegate through the existing action handling", async () => {
 		const pi = mockPi();
 		const ctx = mockCtx();
 		const mgr = new ProfileManager(pi, ctx);
+		const save = vi.fn(async () => {});
 		const sync = vi.fn(async () => {});
 		const openTui = vi.fn(async () => {});
-		mgr.setConfig(configWithProfiles([]));
+		mgr.setConfig(configWithProfiles(["alpha"]));
 
-		registerCommands(pi, mgr, vi.fn() as any, vi.fn() as any, openTui, sync);
+		registerCommands(pi, mgr, save as any, vi.fn() as any, openTui, sync);
 
-		const callArgs = (pi.registerCommand as any).mock.calls.find(
-			(c: any[]) => c[0] === "profiles:sync",
-		);
-		const handler = callArgs[1].handler;
-		await handler("", ctx);
+		const handlerFor = (command: string) =>
+			(pi.registerCommand as any).mock.calls.find(
+				(c: any[]) => c[0] === command,
+			)[1].handler;
+		await handlerFor("profiles:save")("snapshot", ctx);
+		await handlerFor("profiles:sync")("", ctx);
+		await handlerFor("profiles:list")("", ctx);
 
+		expect(save).toHaveBeenCalledWith(ctx, "snapshot");
 		expect(sync).toHaveBeenCalledWith(ctx);
+		expect(ctx.ui.notify).toHaveBeenCalledWith("alpha");
 		expect(openTui).not.toHaveBeenCalled();
 	});
 });

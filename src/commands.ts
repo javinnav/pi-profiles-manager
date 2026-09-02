@@ -30,19 +30,52 @@ export function registerCommands(
 	openTui: OpenTuiFn = async () => {},
 	sync: SyncFn = async () => {},
 ) {
-	pi.registerCommand("profiles:sync", {
-		description: "Sync PiProfiles with managed agents folder",
-		async handler(_args: string, ctx: ExtensionCommandContext) {
-			try {
-				await sync(ctx);
-			} catch (error: unknown) {
-				ctx.ui.notify(
-					error instanceof Error ? error.message : String(error),
-					"error",
-				);
+	const handleAction = async (args: string, ctx: ExtensionCommandContext) => {
+		manager.setContext(ctx);
+		const { verb, name } = parseCommand(args);
+
+		try {
+			if (verb === "list") {
+				return ctx.ui.notify(manager.names().join("\n") || "No profiles");
 			}
-		},
-	});
+			if (verb === "status") {
+				const active = manager.state.get(ctx.sessionManager.getSessionId());
+				return ctx.ui.notify(active?.profile ?? "none");
+			}
+			if (verb === "sync") {
+				await sync(ctx);
+				return;
+			}
+			if (verb === "use") {
+				if (!name) {
+					return ctx.ui.notify("Usage: /profiles use <name>", "error");
+				}
+				await manager.use(name);
+				return;
+			}
+			if (verb === "save") {
+				if (!name) {
+					return ctx.ui.notify("Usage: /profiles save <name>", "error");
+				}
+				await _save(ctx, name);
+				return;
+			}
+			if (verb === "next") {
+				await manager.next();
+				return;
+			}
+			if (verb === "off") {
+				await manager.off();
+				return;
+			}
+			return openTui(ctx as ContextLike);
+		} catch (error: unknown) {
+			ctx.ui.notify(
+				error instanceof Error ? error.message : String(error),
+				"error",
+			);
+		}
+	};
 
 	pi.registerCommand("profiles", {
 		description: "Manage SDD model profiles",
@@ -65,51 +98,14 @@ export function registerCommands(
 				.filter((name) => name.startsWith(namePrefix))
 				.map((value) => ({ value, label: value }));
 		},
-		async handler(args: string, ctx: ExtensionCommandContext) {
-			manager.setContext(ctx);
-			const { verb, name } = parseCommand(args);
-
-			try {
-				if (verb === "list") {
-					return ctx.ui.notify(manager.names().join("\n") || "No profiles");
-				}
-				if (verb === "status") {
-					const active = manager.state.get(ctx.sessionManager.getSessionId());
-					return ctx.ui.notify(active?.profile ?? "none");
-				}
-				if (verb === "sync") {
-					await sync(ctx);
-					return;
-				}
-				if (verb === "use") {
-					if (!name) {
-						return ctx.ui.notify("Usage: /profiles use <name>", "error");
-					}
-					await manager.use(name);
-					return;
-				}
-				if (verb === "save") {
-					if (!name) {
-						return ctx.ui.notify("Usage: /profiles save <name>", "error");
-					}
-					await _save(ctx, name);
-					return;
-				}
-				if (verb === "next") {
-					await manager.next();
-					return;
-				}
-				if (verb === "off") {
-					await manager.off();
-					return;
-				}
-				return openTui(ctx as ContextLike);
-			} catch (error: unknown) {
-				ctx.ui.notify(
-					error instanceof Error ? error.message : String(error),
-					"error",
-				);
-			}
-		},
+		handler: handleAction,
 	});
+
+	for (const action of COMMAND_ACTIONS) {
+		pi.registerCommand(`profiles:${action}`, {
+			description: `PiProfiles: ${action}`,
+			handler: (args: string, ctx: ExtensionCommandContext) =>
+				handleAction(`${action} ${args}`.trim(), ctx),
+		});
+	}
 }
