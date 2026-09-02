@@ -96,7 +96,10 @@ describe("SessionState", () => {
       const snap = snapshot();
 
       state.activate(pi, ctx, snap);
-      expect(pi.appendEntry).toHaveBeenCalledWith(ACTIVE_ENTRY_TYPE, snap);
+      expect(pi.appendEntry).toHaveBeenCalledWith(
+        ACTIVE_ENTRY_TYPE,
+        { ...snap, cwd: "/tmp" },
+      );
     });
 
     it("removes from off set", () => {
@@ -130,6 +133,7 @@ describe("SessionState", () => {
       state.deactivate(pi, ctx);
       expect(pi.appendEntry).toHaveBeenCalledWith(ACTIVE_ENTRY_TYPE, {
         off: true,
+        cwd: "/tmp",
       });
     });
 
@@ -155,7 +159,7 @@ describe("SessionState", () => {
 
     it("restores from branch with active snapshot", () => {
       const state = new SessionState();
-      const snap = snapshot();
+      const snap = snapshot({ cwd: "/tmp" });
       const branch = [
         { type: "custom", customType: "other", data: {} },
         { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: snap },
@@ -170,7 +174,7 @@ describe("SessionState", () => {
     it("returns undefined and adds to off for {off: true}", () => {
       const state = new SessionState();
       const branch = [
-        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: { off: true } },
+        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: { off: true, cwd: "/tmp" } },
       ];
       const ctx = mockCtx("session-1", branch);
 
@@ -181,7 +185,7 @@ describe("SessionState", () => {
 
     it("skips corrupt entries", () => {
       const state = new SessionState();
-      const snap = snapshot();
+      const snap = snapshot({ cwd: "/tmp" });
       const branch = [
         { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: "corrupt" },
         { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: snap },
@@ -194,8 +198,8 @@ describe("SessionState", () => {
 
     it("uses last entry in reverse order", () => {
       const state = new SessionState();
-      const snap1 = snapshot({ profile: "first" });
-      const snap2 = snapshot({ profile: "second" });
+      const snap1 = snapshot({ profile: "first", cwd: "/tmp" });
+      const snap2 = snapshot({ profile: "second", cwd: "/tmp" });
       const branch = [
         { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: snap1 },
         { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: snap2 },
@@ -204,6 +208,68 @@ describe("SessionState", () => {
 
       const result = state.restore(ctx);
       expect(result?.profile).toBe("second");
+    });
+
+    it("persists and restores a selection for the same normalized cwd", () => {
+      const state = new SessionState();
+      const pi = mockPi();
+      const first = mockCtx("first-session");
+      first.cwd = "/workspace/link/../link/project";
+      const snap = snapshot();
+
+      state.activate(pi, first, snap);
+      const persisted = vi.mocked(pi.appendEntry).mock.calls[0]![1];
+      expect(persisted).toMatchObject({ cwd: "/workspace/link/project" });
+
+      const second = mockCtx("second-session", [
+        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: persisted },
+      ]);
+      second.cwd = "/workspace/link/project";
+      expect(new SessionState().restore(second)?.profile).toBe("test-profile");
+    });
+
+    it("isolates selections and off markers to their normalized cwd", () => {
+      const selected = snapshot({ cwd: "/workspace/one" });
+      const state = new SessionState();
+      const other = mockCtx("other", [
+        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: selected },
+      ]);
+      other.cwd = "/workspace/two";
+
+      expect(state.restore(other)).toBeUndefined();
+      expect(state.shouldDefault("other")).toBe(true);
+
+      const pi = mockPi();
+      const source = mockCtx("source");
+      source.cwd = "/workspace/one";
+      state.deactivate(pi, source);
+      const off = vi.mocked(pi.appendEntry).mock.calls[0]![1];
+      expect(off).toMatchObject({ off: true, cwd: "/workspace/one" });
+
+      const sameCwd = mockCtx("same", [
+        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: off },
+      ]);
+      sameCwd.cwd = "/workspace/one";
+      expect(new SessionState().restore(sameCwd)).toBeUndefined();
+      expect(new SessionState().shouldDefault("same")).toBe(true);
+
+      const restored = new SessionState();
+      restored.restore(sameCwd);
+      expect(restored.shouldDefault("same")).toBe(false);
+    });
+
+    it("ignores legacy, corrupt, and malformed cwd journal entries", () => {
+      const state = new SessionState();
+      const ctx = mockCtx("session-1", [
+        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: snapshot() },
+        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: { off: true } },
+        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: { ...snapshot(), cwd: "relative" } },
+        { type: "custom", customType: ACTIVE_ENTRY_TYPE, data: "corrupt" },
+      ]);
+      ctx.cwd = "/workspace/project";
+
+      expect(state.restore(ctx)).toBeUndefined();
+      expect(state.shouldDefault("session-1")).toBe(true);
     });
   });
 
