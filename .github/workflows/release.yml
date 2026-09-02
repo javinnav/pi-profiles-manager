@@ -23,6 +23,14 @@ jobs:
         with:
           node-version: 22.19.0
           cache: npm
+      - name: Install and verify npm
+        shell: bash
+        run: |
+          npm install --global npm@11.5.1
+          if [ "$(npm --version)" != "11.5.1" ]; then
+            echo "Failed to install npm 11.5.1"
+            exit 1
+          fi
       - name: Verify package version
         shell: bash
         run: |
@@ -42,4 +50,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "$GITHUB_REF_NAME" --generate-notes --title "$GITHUB_REF_NAME"
       - name: Publish to NPM
+        # pi-lens-ignore: YAML:0
         run: npm publish --provenance --access public
