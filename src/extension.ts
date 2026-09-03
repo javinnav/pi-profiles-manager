@@ -1,6 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import {
   copyToClipboard,
   DynamicBorder,
@@ -289,6 +290,32 @@ function reconcileManagedAgentRoutes(
   return { ...global, model_profiles: nextModelProfiles };
 }
 
+async function writeActivationGlobalAgentConfig(
+  path: string,
+  config: GlobalAgentConfig,
+): Promise<void> {
+  const serialized = JSON.stringify(config, null, 2);
+  const directory = dirname(path);
+  const temporaryPath = join(
+    directory,
+    `.${basename(path)}.${randomUUID()}.tmp`,
+  );
+
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(temporaryPath, serialized);
+    await rename(temporaryPath, path);
+    return;
+  } catch (error) {
+    try {
+      await unlink(temporaryPath);
+    } catch {
+      // Preserve the pre-commit error if cleanup also fails.
+    }
+    throw error;
+  }
+}
+
 async function currentProfile(ctx: ContextLike, pi: PiLike, config: Config, agentConfigPath: string): Promise<Profile> {
   const orders = Object.values(config.profiles).map((profile) => profile.order);
   const agents = profileAgentsFromGlobal(await readGlobalAgentConfig(agentConfigPath));
@@ -374,8 +401,7 @@ export default function extension(pi: PiLike) {
   const manager = new ProfileManager(pi, undefined, async (routes, ownedAgentNames) => {
     const global = await readActivationGlobalAgentConfig(agentConfigPath);
     const nextGlobal = reconcileManagedAgentRoutes(global, routes, ownedAgentNames);
-    await mkdir(dirname(agentConfigPath), { recursive: true });
-    await writeFile(agentConfigPath, JSON.stringify(nextGlobal, null, 2));
+    await writeActivationGlobalAgentConfig(agentConfigPath, nextGlobal);
   });
   manager.setConfig(readConfigSync(configPath));
 
