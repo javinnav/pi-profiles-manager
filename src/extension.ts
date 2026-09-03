@@ -7,11 +7,11 @@ import {
   getAgentDir,
 } from "@earendil-works/pi-coding-agent";
 import { Container, Input, matchesKey, SelectList, Text } from "@earendil-works/pi-tui";
-import { emptyConfig, migrateV1, normalizeAgent, supportedShortcut, validateConfig } from "./config.js";
 import { registerCommands } from "./commands.js";
-import { discoverManagedAgentNames, reconcileProfileAgents } from "./sync.js";
+import { emptyConfig, migrateV1, normalizeAgent, supportedShortcut, validateConfig } from "./config.js";
 import { DEFAULT_SHORTCUT, STATUS_KEY } from "./constants.js";
 import { ProfileManager } from "./profile-manager.js";
+import { discoverManagedAgentNames, reconcileProfileAgents } from "./sync.js";
 import type {
   Config,
   ContextLike,
@@ -216,7 +216,7 @@ function showExportDialog(ctx: ContextLike, profileName: string, exportString: s
 }
 
 type GlobalAgentRoute = { model?: string; effort?: ThinkingLevel };
-type GlobalAgentConfig = { model_profiles?: Record<string, GlobalAgentRoute>; [key: string]: unknown };
+type GlobalAgentConfig = { model_profiles?: Record<string, unknown>; [key: string]: unknown };
 
 function object(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
@@ -243,11 +243,54 @@ async function readGlobalAgentConfig(path: string): Promise<GlobalAgentConfig> {
   }
 }
 
-function globalAgentRoute(route: PersistedRoute): GlobalAgentRoute {
-  return {
+async function readActivationGlobalAgentConfig(path: string): Promise<GlobalAgentConfig> {
+  let raw: string;
+  try {
+    raw = await readFile(path, "utf8");
+  } catch (error) {
+    if (object(error) && error.code === "ENOENT") return {};
+    throw error;
+  }
+  const parsed: unknown = JSON.parse(raw);
+  if (!object(parsed)) {
+    throw new Error("Invalid subagents configuration: expected an object");
+  }
+  return parsed;
+}
+
+function globalAgentRoute(route: PersistedRoute): GlobalAgentRoute | undefined {
+  const result: GlobalAgentRoute = {
     ...(route.model ? { model: `${route.model.provider}/${route.model.id}` } : {}),
-    ...(route.effort && route.effort !== "inherit" ? { effort: route.effort } : {}),
+    ...(route.effort !== undefined && route.effort !== "inherit" ? { effort: route.effort } : {}),
   };
+  return Object.keys(result).length ? result : undefined;
+}
+
+function normalizedAgentNames(names: readonly string[]): Set<string> {
+  return new Set(names.map(normalizeAgent).filter((name) => name.length > 0));
+}
+
+function reconcileManagedAgentRoutes(
+  global: GlobalAgentConfig,
+  routes: Readonly<Record<string, PersistedRoute>>,
+  ownedAgentNames: readonly string[],
+): GlobalAgentConfig {
+  const owned = normalizedAgentNames(ownedAgentNames);
+  const nextModelProfiles: Record<string, unknown> = {};
+  const existingModelProfiles = object(global.model_profiles)
+    ? global.model_profiles
+    : {};
+
+  for (const [name, route] of Object.entries(existingModelProfiles)) {
+    if (!owned.has(normalizeAgent(name))) nextModelProfiles[name] = route;
+  }
+  for (const [name, route] of Object.entries(routes)) {
+    const normalized = normalizeAgent(name);
+    if (!normalized) continue;
+    const runtimeRoute = globalAgentRoute(route);
+    if (runtimeRoute) nextModelProfiles[normalized] = runtimeRoute;
+  }
+  return { ...global, model_profiles: nextModelProfiles };
 }
 
 async function currentProfile(ctx: ContextLike, pi: PiLike, config: Config, agentConfigPath: string): Promise<Profile> {
@@ -333,23 +376,11 @@ export default function extension(pi: PiLike) {
   const agentDir = getAgentDir();
   const configPath = join(agentDir, "pi-profiles", "config.json");
   const agentConfigPath = join(agentDir, "subagents.json");
-  const manager = new ProfileManager(pi, undefined, async (routes, previousRoutes) => {
-    const global = await readGlobalAgentConfig(agentConfigPath);
-    const modelProfiles = object(global.model_profiles) ? { ...global.model_profiles } : {};
-    const previous = new Set(previousRoutes.map(normalizeAgent));
-    for (const name of Object.keys(modelProfiles)) {
-      if (previous.has(normalizeAgent(name))) delete modelProfiles[name];
-    }
-    for (const [name, route] of Object.entries(routes)) {
-      const normalized = normalizeAgent(name);
-      for (const existing of Object.keys(modelProfiles)) {
-        if (normalizeAgent(existing) === normalized) delete modelProfiles[existing];
-      }
-      modelProfiles[normalized] = globalAgentRoute(route);
-    }
-    global.model_profiles = modelProfiles;
+  const manager = new ProfileManager(pi, undefined, async (routes, ownedAgentNames) => {
+    const global = await readActivationGlobalAgentConfig(agentConfigPath);
+    const nextGlobal = reconcileManagedAgentRoutes(global, routes, ownedAgentNames);
     await mkdir(dirname(agentConfigPath), { recursive: true });
-    await writeFile(agentConfigPath, JSON.stringify(global, null, 2));
+    await writeFile(agentConfigPath, JSON.stringify(nextGlobal, null, 2));
   });
   manager.setConfig(readConfigSync(configPath));
 
