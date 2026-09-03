@@ -673,7 +673,11 @@ function showExportDialog(ctx, profileName, exportString, copyPromise) {
     container.addChild(new Text(theme.fg("accent", theme.bold(`\u{1F4E4} Profile Export: '${profileName}'`)), 1, 0));
     container.addChild(statusText);
     container.addChild(new Text(theme.fg("dim", "Select string below to copy:"), 1, 0));
-    container.addChild(new Text(theme.fg("accent", exportString), 1, 0));
+    const CHUNK_SIZE = 60;
+    for (let i = 0; i < exportString.length; i += CHUNK_SIZE) {
+      const chunk = exportString.slice(i, i + CHUNK_SIZE).padEnd(80, " ");
+      container.addChild(new Text(theme.fg("accent", chunk), 1, 0));
+    }
     container.addChild(new Text(theme.fg("dim", "[ Press any key or Esc to close ]"), 1, 0));
     container.addChild(new DynamicBorder((value) => theme.fg("accent", value)));
     copyPromise.then(() => {
@@ -748,6 +752,7 @@ function parseModel(value) {
   return { provider: value.slice(0, slash), id: value.slice(slash + 1) };
 }
 function importProfile(raw) {
+  raw = raw.replace(/\s+/g, "");
   const prefix = "piprofile:1:";
   if (!raw.startsWith(prefix)) throw new Error("String must start with piprofile:1:");
   let parsed;
