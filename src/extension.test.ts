@@ -1,3 +1,4 @@
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const codingAgentState = vi.hoisted(() => ({
@@ -56,6 +57,15 @@ vi.mock("node:fs/promises", () => ({
 
 import extension from "../index.js";
 import type { PiLike } from "./types.js";
+
+function encodeV2Payload(payload: unknown): string {
+  return deflateRawSync(Buffer.from(JSON.stringify(payload))).toString("base64url");
+}
+
+function decodeV2Export(value: string): unknown {
+  expect(value).toMatch(/^piprofile:2:[A-Za-z0-9_-]+$/);
+  return JSON.parse(inflateRawSync(Buffer.from(value.slice("piprofile:2:".length), "base64url")).toString("utf8"));
+}
 
 const MOCK_AGENT_DIR = "/tmp/mock-agent";
 const MOCK_AGENT_CONFIG_PATH = `${MOCK_AGENT_DIR}/subagents.json`;
@@ -726,34 +736,24 @@ describe("package extension", () => {
       const handling = handler("", ctx).then(() => { handlerSettled = true; });
       await vi.waitFor(() => expect(custom).toHaveBeenCalledTimes(3));
 
-      expect(codingAgentState.copyToClipboard).toHaveBeenCalledWith(
-        "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
-      );
+      expect(codingAgentState.copyToClipboard).toHaveBeenCalledTimes(1);
+      const copied = codingAgentState.copyToClipboard.mock.calls[0]![0] as string;
+      expect(decodeV2Export(copied)).toEqual({
+        _type: "piprofile",
+        version: 1,
+        profile: { name: "alpha", order: 0, favorite: false },
+      });
       expect(tuiState.texts).toContainEqual([
         "📤 Profile Export: 'alpha'",
         1,
         0,
       ]);
-      expect(tuiState.texts).toContainEqual([
+      expect(tuiState.texts).not.toContainEqual([
         "Select string below to copy:",
         1,
         0,
       ]);
-      expect(tuiState.texts).toContainEqual([
-        "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInBy".padEnd(80, " "),
-        1,
-        0,
-      ]);
-      expect(tuiState.texts).toContainEqual([
-        "b2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpm".padEnd(80, " "),
-        1,
-        0,
-      ]);
-      expect(tuiState.texts).toContainEqual([
-        "YWxzZX19".padEnd(80, " "),
-        1,
-        0,
-      ]);
+      expect(tuiState.texts.filter(([text]) => typeof text === "string" && text.startsWith("piprofile:"))).toEqual([]);
       expect(tuiState.texts).toContainEqual([
         "[ Press any key or Esc to close ]",
         1,
@@ -783,7 +783,7 @@ describe("package extension", () => {
     },
   );
 
-  it("keeps export string visible and shows error if clipboard fails", async () => {
+  it("hides export string and shows error if clipboard fails", async () => {
     const syncFs = await import("node:fs");
     vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
       version: 1,
@@ -835,21 +835,8 @@ describe("package extension", () => {
       1,
       0,
     ]);
-    expect(tuiState.texts).toContainEqual([
-      "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInBy".padEnd(80, " "),
-      1,
-      0,
-    ]);
-    expect(tuiState.texts).toContainEqual([
-      "b2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpm".padEnd(80, " "),
-      1,
-      0,
-    ]);
-    expect(tuiState.texts).toContainEqual([
-      "YWxzZX19".padEnd(80, " "),
-      1,
-      0,
-    ]);
+    expect(tuiState.texts.filter(([text]) => typeof text === "string" && text.startsWith("piprofile:"))).toEqual([]);
+    expect(tuiState.texts).not.toContainEqual(["Select string below to copy:", 1, 0]);
     expect(tuiState.texts).toContainEqual([
       expect.stringContaining("Failed to copy: clipboard unavailable"),
       1,
@@ -873,22 +860,22 @@ describe("package extension", () => {
       ([name]: [string]) => name === "profiles",
     )[1].handler as (args: string, ctx: any) => Promise<void>;
     vi.mocked(fs.writeFile).mockClear();
-    const payload = Buffer.from(JSON.stringify({
-      _type: "piprofile",
-      version: 1,
-      profile: {
-        name: "beta",
-        favorite: true,
-        order: 9,
-        orchestrator: { model: { provider: "openai", id: "gpt-4" }, effort: "high" },
-        agents: { reviewer: { effort: "low" } },
-      },
-    })).toString("base64");
-    const ctx = {
-      sessionManager: { getSessionId: () => "session-1" },
-      modelRegistry: { find: vi.fn() },
-      ui: {
-        custom: vi.fn().mockResolvedValueOnce("__IMPORT__").mockResolvedValueOnce(`piprofile:1:${payload}`).mockResolvedValueOnce(null),
+        const payload = encodeV2Payload({
+          _type: "piprofile",
+          version: 1,
+          profile: {
+            name: "beta",
+            favorite: true,
+            order: 9,
+            orchestrator: { model: { provider: "openai", id: "gpt-4" }, effort: "high" },
+            agents: { reviewer: { effort: "low" } },
+          },
+        });
+        const ctx = {
+          sessionManager: { getSessionId: () => "session-1" },
+          modelRegistry: { find: vi.fn() },
+          ui: {
+            custom: vi.fn().mockResolvedValueOnce("__IMPORT__").mockResolvedValueOnce(`piprofile:2:${payload}`).mockResolvedValueOnce(null),
         notify: vi.fn(),
         setStatus: vi.fn(),
       },
@@ -914,7 +901,7 @@ describe("package extension", () => {
       ([name]: [string]) => name === "profiles",
     )[1].handler as (args: string, ctx: any) => Promise<void>;
     vi.mocked(fs.writeFile).mockClear();
-    const payloadOriginal = Buffer.from(JSON.stringify({
+    const payloadOriginal = encodeV2Payload({
       _type: "piprofile",
       version: 1,
       profile: {
@@ -923,10 +910,10 @@ describe("package extension", () => {
         order: 9,
         orchestrator: { model: { provider: "openai", id: "gpt-4" }, effort: "high" },
       },
-    })).toString("base64");
+    });
     
     // Inject some spaces and newlines to trigger stripping logic
-    const payload = `piprofile: 1 :\n ${payloadOriginal.slice(0, 10)} \n ${payloadOriginal.slice(10)}  `;
+    const payload = `piprofile: 2 :\n ${payloadOriginal.slice(0, 10)} \n ${payloadOriginal.slice(10)}  `;
 
     const ctx = {
       sessionManager: { getSessionId: () => "session-1" },
@@ -958,7 +945,7 @@ describe("package extension", () => {
       sessionManager: { getSessionId: () => "session-1" },
       modelRegistry: { find: vi.fn() },
       ui: {
-        custom: vi.fn().mockResolvedValueOnce("__IMPORT__").mockResolvedValueOnce("piprofile:1:not-json").mockResolvedValueOnce(null),
+        custom: vi.fn().mockResolvedValueOnce("__IMPORT__").mockResolvedValueOnce("piprofile:2:not-json").mockResolvedValueOnce(null),
         notify: vi.fn(),
         setStatus: vi.fn(),
       },
@@ -972,7 +959,7 @@ describe("package extension", () => {
     );
   });
 
-  it("rejects malformed legacy profile routes without persisting them", async () => {
+  it("rejects v1 profile exports without persisting them", async () => {
     const fs = await import("node:fs/promises");
     vi.mocked(fs.writeFile).mockClear();
     const payload = Buffer.from(JSON.stringify({
@@ -1007,7 +994,7 @@ describe("package extension", () => {
     );
   });
 
-  it("rejects legacy profile routes with malformed model identifiers", async () => {
+  it("rejects v1 exports with malformed model identifiers", async () => {
     const fs = await import("node:fs/promises");
     vi.mocked(fs.writeFile).mockClear();
     const payload = Buffer.from(JSON.stringify({
@@ -1042,7 +1029,7 @@ describe("package extension", () => {
     );
   });
 
-  it("rejects legacy profile routes with extra model identifier slashes without persisting them", async () => {
+  it("rejects v1 exports with extra model identifier slashes", async () => {
     const fs = await import("node:fs/promises");
     vi.mocked(fs.writeFile).mockClear();
     const payload = Buffer.from(JSON.stringify({

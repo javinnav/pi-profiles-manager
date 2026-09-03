@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { deflateRawSync, inflateRawSync } from "node:zlib";
 import {
   copyToClipboard,
   DynamicBorder,
@@ -175,7 +176,7 @@ function prompt(ctx: ContextLike, title: string, initial = ""): Promise<string |
   }, { overlay: true });
 }
 
-function showExportDialog(ctx: ContextLike, profileName: string, exportString: string, copyPromise: Promise<void>): Promise<void> {
+function showExportDialog(ctx: ContextLike, profileName: string, copyPromise: Promise<void>): Promise<void> {
   return (ctx.ui.custom as (factory: unknown, options?: unknown) => Promise<void>)((tui: { requestRender: () => void }, theme: { fg: (color: string, text: string) => string; bold: (text: string) => string }, _kb: unknown, done: (value: void) => void) => {
     const container = new Container() as { addChild: (child: unknown) => void; render: (width: number) => unknown; invalidate: () => void };
     const statusText = new Text(theme.fg("accent", "Copying to clipboard..."), 1, 0);
@@ -183,12 +184,6 @@ function showExportDialog(ctx: ContextLike, profileName: string, exportString: s
     container.addChild(new DynamicBorder((value: string) => theme.fg("accent", value)));
     container.addChild(new Text(theme.fg("accent", theme.bold(`📤 Profile Export: '${profileName}'`)), 1, 0));
     container.addChild(statusText);
-    container.addChild(new Text(theme.fg("dim", "Select string below to copy:"), 1, 0));
-    const CHUNK_SIZE = 60;
-    for (let i = 0; i < exportString.length; i += CHUNK_SIZE) {
-      const chunk = exportString.slice(i, i + CHUNK_SIZE).padEnd(80, " ");
-      container.addChild(new Text(theme.fg("accent", chunk), 1, 0));
-    }
     container.addChild(new Text(theme.fg("dim", "[ Press any key or Esc to close ]"), 1, 0));
     container.addChild(new DynamicBorder((value: string) => theme.fg("accent", value)));
 
@@ -205,7 +200,7 @@ function showExportDialog(ctx: ContextLike, profileName: string, exportString: s
     return {
       render: (width: number) => container.render(width),
       invalidate: () => container.invalidate(),
-      handleInput: (data: string) => {
+      handleInput: () => {
         done();
         tui.requestRender();
       },
@@ -346,11 +341,15 @@ function parseModel(value: string): ModelRef | undefined {
 
 function importProfile(raw: string): { name: string; profile: Profile; favorite?: boolean } {
   raw = raw.replace(/\s+/g, "");
-  const prefix = "piprofile:1:";
-  if (!raw.startsWith(prefix)) throw new Error("String must start with piprofile:1:");
+  const prefix = "piprofile:2:";
+  if (!raw.startsWith(prefix)) throw new Error("String must start with piprofile:2:");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(Buffer.from(raw.slice(prefix.length), "base64").toString("utf8"));
+    const encoded = raw.slice(prefix.length);
+    if (!encoded || !/^[A-Za-z0-9_-]+$/.test(encoded) || encoded.length % 4 === 1) {
+      throw new Error("Invalid Base64URL payload");
+    }
+    parsed = JSON.parse(inflateRawSync(Buffer.from(encoded, "base64url")).toString("utf8"));
   } catch {
     throw new Error("Invalid PiProfile payload");
   }
@@ -362,39 +361,10 @@ function importProfile(raw: string): { name: string; profile: Profile; favorite?
   const name = candidate.name;
   if (typeof name !== "string" || !name.trim()) throw new Error("Invalid or missing profile name");
   const config = validateConfig({ version: 1, profiles: { [name]: candidate } }).config;
-  if (config) return {
-    name,
-    profile: config.profiles[name],
-    ...(candidate.favorite === true ? { favorite: true } : {}),
-  };
-
-  // Accept prior export strings while storing only validated typed routes.
-  const oldRoute = (route: unknown): PersistedRoute | undefined => {
-    if (!object(route) || typeof route.model !== "string" || typeof route.thinking !== "string") return undefined;
-    const model = parseModel(route.model);
-    if (!model) return undefined;
-    return validateConfig({
-      version: 1,
-      profiles: { legacy: { order: 0, orchestrator: { model, effort: route.thinking } } },
-    }).config?.profiles.legacy.orchestrator;
-  };
-  const orchestrator = oldRoute(candidate.orchestrator);
-  if (!orchestrator) throw new Error("Invalid profile route");
-  const agents: Record<string, PersistedRoute> = {};
-  if (candidate.agents !== undefined) {
-    if (!object(candidate.agents)) throw new Error("Invalid agent overrides");
-    for (const [agent, route] of Object.entries(candidate.agents)) {
-      const normalized = normalizeAgent(agent);
-      const parsedRoute = oldRoute(route);
-      if (!normalized || !parsedRoute || agents[normalized]) {
-        throw new Error(`Invalid agent override ${agent}`);
-      }
-      agents[normalized] = parsedRoute;
-    }
-  }
+  if (!config) throw new Error("Invalid PiProfile payload");
   return {
     name,
-    profile: { order: 0, orchestrator, ...(Object.keys(agents).length ? { agents } : {}) },
+    profile: config.profiles[name],
     ...(candidate.favorite === true ? { favorite: true } : {}),
   };
 }
@@ -579,7 +549,7 @@ export default function extension(pi: PiLike) {
         continue;
       }
       if (action === "export") {
-        const encoded = Buffer.from(JSON.stringify({
+        const encoded = deflateRawSync(Buffer.from(JSON.stringify({
           _type: "piprofile",
           version: 1,
           profile: {
@@ -587,10 +557,10 @@ export default function extension(pi: PiLike) {
             ...manager.config.profiles[selected],
             favorite: selected === manager.config.defaultProfile,
           },
-        })).toString("base64");
-        const exportString = `piprofile:1:${encoded}`;
+        }))).toString("base64url");
+        const exportString = `piprofile:2:${encoded}`;
         const copyPromise = copyToClipboard(exportString);
-        await showExportDialog(ctx, selected, exportString, copyPromise);
+        await showExportDialog(ctx, selected, copyPromise);
         continue;
       }
       if (action === "delete") {
