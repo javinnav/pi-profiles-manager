@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 const codingAgentState = vi.hoisted(() => ({
   copyToClipboard: vi.fn(),
@@ -50,10 +50,15 @@ vi.mock("node:fs/promises", () => ({
   mkdir: vi.fn(),
   readFile: vi.fn(),
   writeFile: vi.fn(),
+  rename: vi.fn(),
+  unlink: vi.fn(),
 }));
 
 import extension from "../index.js";
 import type { PiLike } from "./types.js";
+
+const MOCK_AGENT_DIR = "/tmp/mock-agent";
+const MOCK_AGENT_CONFIG_PATH = `${MOCK_AGENT_DIR}/subagents.json`;
 
 function mockPi(): PiLike {
   return {
@@ -67,7 +72,255 @@ function mockPi(): PiLike {
   };
 }
 
+function profileUseHandler(pi: PiLike) {
+  return (vi.mocked(pi.registerCommand).mock.calls as unknown[][]).find(
+    ([name]) => name === "profiles",
+  )![1] as { handler: (args: string, ctx: unknown) => Promise<void> };
+}
+
+function profileContext() {
+  return {
+    sessionManager: { getSessionId: () => "session-1" },
+    modelRegistry: { find: vi.fn() },
+    ui: { notify: vi.fn(), setStatus: vi.fn() },
+  };
+}
+
+afterEach(async () => {
+  const fs = await import("node:fs/promises");
+  for (const operation of [fs.mkdir, fs.readFile, fs.writeFile, fs.rename, fs.unlink]) {
+    vi.mocked(operation).mockClear();
+  }
+});
+
 describe("package extension", () => {
+  it("reconciles all durable managed routes and replaces selected routes completely", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: {
+        alpha: {
+          order: 0,
+          agents: {
+            " GENTLE-AI-EXPLORE ": {
+              model: { provider: "openai", id: "new-model" },
+              effort: "low",
+            },
+          },
+        },
+        other: {
+          order: 1,
+          agents: { "gentle-ai-review": { effort: "medium" } },
+        },
+      },
+    }));
+    const fs = await import("node:fs/promises");
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      untouched: true,
+      model_profiles: {
+        " GENTLE-AI-EXPLORE ": {
+          model: "anthropic/old-model",
+          effort: "high",
+          extra: "must be removed",
+        },
+        "GENTLE-AI-REVIEW": { model: "anthropic/review" },
+        " user-route ": { arbitrary: { value: true }, effort: "max" },
+      },
+    }));
+    vi.mocked(fs.writeFile).mockClear();
+    vi.mocked(fs.rename).mockClear();
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("use alpha", ctx);
+
+    expect(vi.mocked(fs.writeFile)).toHaveBeenCalledWith(
+      "/tmp/mock-agent/subagents.json",
+      expect.stringContaining('"gentle-ai-explore"'),
+    );
+    const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
+    expect(saved).toEqual({
+      untouched: true,
+      model_profiles: {
+        " user-route ": { arbitrary: { value: true }, effort: "max" },
+        "gentle-ai-explore": {
+          model: "openai/new-model",
+          effort: "low",
+        },
+      },
+    });
+  });
+
+  it("removes stale model and effort values for null and inherit routes", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: {
+        alpha: {
+          order: 0,
+          agents: {
+            effortOnly: { model: null, effort: "low" },
+            modelOnly: { model: { provider: "openai", id: "new" }, effort: "inherit" },
+            empty: { model: null, effort: "inherit" },
+          },
+        },
+      },
+    }));
+    const fs = await import("node:fs/promises");
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
+      model_profiles: {
+        effortonly: { model: "anthropic/old-effort", effort: "high" },
+        modelonly: { model: "anthropic/old-model", effort: "high" },
+        empty: { model: "anthropic/old-empty", effort: "high" },
+      },
+    }));
+    vi.mocked(fs.writeFile).mockClear();
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("use alpha", ctx);
+
+    const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
+    expect(saved.model_profiles).toEqual({
+      effortonly: { effort: "low" },
+      modelonly: { model: "openai/new" },
+    });
+  });
+
+  it("preserves unowned routes and top-level settings without routing the orchestrator", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: {
+        alpha: {
+          order: 0,
+          orchestrator: {
+            model: { provider: "openai", id: "orchestrator" },
+            effort: "high",
+          },
+        },
+      },
+    }));
+    const fs = await import("node:fs/promises");
+    const global = {
+      custom_setting: { enabled: true },
+      model_profiles: {
+        external: { model: "anthropic/external", effort: "low", extra: 7 },
+      },
+    };
+    vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify(global));
+    vi.mocked(fs.writeFile).mockClear();
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn(() => ({ provider: "openai", id: "orchestrator" })) },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("use alpha", ctx);
+
+    const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
+    expect(saved).toEqual(global);
+    expect(pi.setModel).toHaveBeenCalled();
+  });
+
+  it.each([
+    ["non-ENOENT read errors", Object.assign(new Error("permission denied"), { code: "EACCES" })],
+    ["malformed JSON", "not json"],
+    ["parsed non-object JSON", "[]"],
+  ])("rejects %s before writing runtime configuration", async (_label, failure) => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: { alpha: { order: 0, agents: { reviewer: { effort: "low" } } } },
+    }));
+    const fs = await import("node:fs/promises");
+    const initialRuntime = JSON.stringify({
+      settings: { preserve: true },
+      model_profiles: {
+        reviewer: { model: "anthropic/old", effort: "high" },
+        external: { custom: "untouched" },
+      },
+    });
+    let runtimeContent = initialRuntime;
+    vi.mocked(fs.readFile).mockRejectedValue(
+      typeof failure === "string" ? new Error(failure) : failure,
+    );
+    if (_label === "malformed JSON") vi.mocked(fs.readFile).mockResolvedValue("not json");
+    if (_label === "parsed non-object JSON") vi.mocked(fs.readFile).mockResolvedValue("[]");
+    vi.mocked(fs.writeFile).mockClear();
+    vi.mocked(fs.rename).mockClear();
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("use alpha", ctx);
+
+    expect(fs.writeFile).not.toHaveBeenCalled();
+    expect(fs.rename).not.toHaveBeenCalled();
+    expect(runtimeContent).toBe(initialRuntime);
+    expect(ctx.ui.notify).toHaveBeenCalledWith(expect.any(String), "error");
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("treats a missing runtime configuration as empty during activation", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: { alpha: { order: 0, agents: { reviewer: { effort: "low" } } } },
+    }));
+    const fs = await import("node:fs/promises");
+    vi.mocked(fs.readFile).mockRejectedValue(Object.assign(new Error("missing"), { code: "ENOENT" }));
+    vi.mocked(fs.writeFile).mockClear();
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("use alpha", ctx);
+
+    const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
+    expect(saved.model_profiles).toEqual({ reviewer: { effort: "low" } });
+  });
+
   it("creates typed profiles without dropping global config and adds them to the active cycle", async () => {
     const fs = await import("node:fs/promises");
     vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
