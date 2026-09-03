@@ -143,9 +143,9 @@ describe("package extension", () => {
 
     await handler("use alpha", ctx);
 
-    expect(vi.mocked(fs.writeFile)).toHaveBeenCalledWith(
+    expect(fs.rename).toHaveBeenCalledWith(
+      expect.any(String),
       "/tmp/mock-agent/subagents.json",
-      expect.stringContaining('"gentle-ai-explore"'),
     );
     const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
     expect(saved).toEqual({
@@ -321,6 +321,162 @@ describe("package extension", () => {
     expect(saved.model_profiles).toEqual({ reviewer: { effort: "low" } });
   });
 
+  it("persists activation through a same-directory temp file and rename", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: { alpha: { order: 0, agents: { reviewer: { effort: "low" } } } },
+    }));
+    const fs = await import("node:fs/promises");
+    const initial = JSON.stringify({
+      untouched: { enabled: true },
+      model_profiles: { reviewer: { model: "anthropic/old", effort: "high" } },
+    });
+    let target = initial;
+    let temp = "";
+    const events: string[] = [];
+    vi.mocked(fs.readFile).mockResolvedValueOnce(initial);
+    vi.mocked(fs.writeFile).mockImplementationOnce(async (path: any, data: any) => {
+      events.push("write");
+      temp = String(data);
+      expect(String(path)).not.toBe(MOCK_AGENT_CONFIG_PATH);
+      expect(String(path).split("/").slice(0, -1).join("/")).toBe(MOCK_AGENT_DIR);
+    });
+    vi.mocked(fs.rename).mockImplementationOnce(async (from: any, to: any) => {
+      events.push("rename");
+      expect(String(from)).toEqual(expect.any(String));
+      expect(String(to)).toBe(MOCK_AGENT_CONFIG_PATH);
+      target = temp;
+    });
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = profileUseHandler(pi).handler;
+    const ctx = profileContext();
+
+    await handler("use alpha", ctx);
+
+    expect(fs.mkdir).toHaveBeenCalledWith(MOCK_AGENT_DIR, { recursive: true });
+    expect(events).toEqual(["write", "rename"]);
+    expect(fs.unlink).not.toHaveBeenCalled();
+    expect(target).not.toBe(initial);
+    expect(JSON.parse(target).model_profiles).toEqual({ reviewer: { effort: "low" } });
+    expect(fs.rename).toHaveBeenCalledWith(
+      expect.not.stringMatching(/^\/tmp\/mock-agent\/subagents\.json$/),
+      MOCK_AGENT_CONFIG_PATH,
+    );
+  });
+
+  it("keeps the target unchanged and reports temporary-write failures", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: { alpha: { order: 0, agents: { reviewer: { effort: "low" } } } },
+    }));
+    const fs = await import("node:fs/promises");
+    const initial = JSON.stringify({
+      untouched: { enabled: true },
+      model_profiles: { reviewer: { model: "anthropic/old", effort: "high" } },
+    });
+    let target = initial;
+    const writeError = new Error("temporary write failed");
+    vi.mocked(fs.readFile).mockResolvedValueOnce(initial);
+    vi.mocked(fs.writeFile).mockRejectedValueOnce(writeError);
+    vi.mocked(fs.unlink).mockResolvedValueOnce(undefined);
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("use alpha", ctx);
+
+    expect(target).toBe(initial);
+    expect(fs.rename).not.toHaveBeenCalled();
+    expect(fs.unlink).toHaveBeenCalledWith(expect.any(String));
+    expect(ctx.ui.notify).toHaveBeenCalledWith("temporary write failed", "error");
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("keeps the target unchanged and reports rename failures", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: { alpha: { order: 0, agents: { reviewer: { effort: "low" } } } },
+    }));
+    const fs = await import("node:fs/promises");
+    const initial = JSON.stringify({
+      untouched: { enabled: true },
+      model_profiles: { reviewer: { model: "anthropic/old", effort: "high" } },
+    });
+    let target = initial;
+    const renameError = new Error("rename failed");
+    vi.mocked(fs.readFile).mockResolvedValueOnce(initial);
+    vi.mocked(fs.writeFile).mockImplementationOnce(async () => undefined);
+    vi.mocked(fs.rename).mockRejectedValueOnce(renameError);
+    vi.mocked(fs.unlink).mockResolvedValueOnce(undefined);
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("use alpha", ctx);
+
+    expect(target).toBe(initial);
+    expect(fs.rename).toHaveBeenCalled();
+    expect(fs.unlink).toHaveBeenCalledWith(expect.any(String));
+    expect(ctx.ui.notify).toHaveBeenCalledWith("rename failed", "error");
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
+  it("preserves the original persistence error when temp cleanup fails", async () => {
+    const syncFs = await import("node:fs");
+    vi.mocked(syncFs.readFileSync).mockReturnValue(JSON.stringify({
+      version: 1,
+      profiles: { alpha: { order: 0, agents: { reviewer: { effort: "low" } } } },
+    }));
+    const fs = await import("node:fs/promises");
+    const initial = JSON.stringify({ model_profiles: { reviewer: { effort: "high" } } });
+    let target = initial;
+    const renameError = new Error("original rename failure");
+    const cleanupError = new Error("cleanup failed");
+    vi.mocked(fs.readFile).mockResolvedValueOnce(initial);
+    vi.mocked(fs.writeFile).mockImplementationOnce(async () => undefined);
+    vi.mocked(fs.rename).mockRejectedValueOnce(renameError);
+    vi.mocked(fs.unlink).mockRejectedValueOnce(cleanupError);
+
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: { notify: vi.fn(), setStatus: vi.fn() },
+    };
+
+    await handler("use alpha", ctx);
+
+    expect(target).toBe(initial);
+    expect(fs.unlink).toHaveBeenCalledWith(expect.any(String));
+    expect(ctx.ui.notify).toHaveBeenCalledWith("original rename failure", "error");
+    expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+  });
+
   it("creates typed profiles without dropping global config and adds them to the active cycle", async () => {
     const fs = await import("node:fs/promises");
     vi.mocked(fs.readFile).mockResolvedValue(JSON.stringify({
@@ -405,9 +561,9 @@ describe("package extension", () => {
 
     await handler("use alpha", ctx);
 
-    expect(vi.mocked(fs.writeFile)).toHaveBeenCalledWith(
+    expect(vi.mocked(fs.rename)).toHaveBeenCalledWith(
+      expect.any(String),
       "/tmp/mock-agent/subagents.json",
-      expect.stringContaining('"reviewer"'),
     );
     const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
     expect(saved).toMatchObject({
