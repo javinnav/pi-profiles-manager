@@ -11,20 +11,37 @@ import type {
   RuntimeEffort,
 } from "./types.js";
 
+type AgentRouteSyncRequest = {
+  routes: Readonly<Record<string, PersistedRoute>>;
+  ownedAgentNames: ReadonlySet<string>;
+};
+
+type ApplyAgentRoutes = (request: AgentRouteSyncRequest) => Promise<void>;
+
+type LegacyApplyAgentRoutes = (
+  routes: Record<string, PersistedRoute>,
+  ownedAgentNames: string[],
+) => Promise<void>;
+
 export class ProfileManager {
   readonly state = new SessionState();
   config: Config = { version: 1, profiles: {} };
   private ctx?: ContextLike;
+  private readonly applyAgentRoutes: ApplyAgentRoutes;
 
   constructor(
     readonly pi: PiLike,
     ctx?: ContextLike,
-    private readonly applyAgentRoutes: (
-      routes: Record<string, PersistedRoute>,
-      previousRoutes: string[],
-    ) => Promise<void> = async () => {},
+    applyAgentRoutes: LegacyApplyAgentRoutes = async () => {},
   ) {
     this.ctx = ctx;
+    this.applyAgentRoutes = (request) =>
+      applyAgentRoutes.length >= 2
+        ? applyAgentRoutes(
+            request.routes as Record<string, PersistedRoute>,
+            [...request.ownedAgentNames],
+          )
+        : (applyAgentRoutes as unknown as ApplyAgentRoutes)(request);
   }
 
   setContext(ctx: ContextLike) {
@@ -62,6 +79,17 @@ export class ProfileManager {
     };
   }
 
+  private ownedAgentNames(): ReadonlySet<string> {
+    const owned = new Set<string>();
+    for (const profile of Object.values(this.config.profiles)) {
+      for (const agent of Object.keys(profile.agents ?? {})) {
+        const normalized = normalizeAgent(agent);
+        if (normalized) owned.add(normalized);
+      }
+    }
+    return owned;
+  }
+
   private async apply(ctx: ContextLike, target: Route): Promise<void> {
     if (target.model) {
       const model = ctx.modelRegistry.find(
@@ -80,11 +108,7 @@ export class ProfileManager {
       }
     }
     if (target.effort !== undefined) {
-      try {
-        this.pi.setThinkingLevel(target.effort);
-      } catch {
-        // Graceful degradation: effort not applied live
-      }
+      this.pi.setThinkingLevel(target.effort);
     }
   }
 
@@ -104,12 +128,10 @@ export class ProfileManager {
 
     try {
       await this.apply(ctx, target);
-      await this.applyAgentRoutes(
-        profile.agents ?? {},
-        current?.agentRoutes ?? Object.keys(
-          current ? this.config.profiles[current.profile]?.agents ?? {} : {},
-        ),
-      );
+      await this.applyAgentRoutes({
+        routes: profile.agents ?? {},
+        ownedAgentNames: this.ownedAgentNames(),
+      });
       const snapshot: ActiveSnapshot = {
         profile: name,
         route: resolveDefaultRoute(profile.orchestrator),

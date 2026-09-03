@@ -47,6 +47,11 @@ function config(profiles: Record<string, Partial<Profile>> = {}): Config {
   };
 }
 
+type AgentSyncRequest = {
+  routes: Record<string, unknown>;
+  ownedAgentNames: ReadonlySet<string>;
+};
+
 describe("ProfileManager", () => {
   describe("names", () => {
     it("returns profiles sorted by order", () => {
@@ -129,29 +134,86 @@ describe("ProfileManager", () => {
       expect(pi.setThinkingLevel).not.toHaveBeenCalled();
     });
 
-    it("applies only explicit agent routes when profiles are used and cycled", async () => {
+    it("sends selected routes and durable ownership on first activation", async () => {
       const pi = mockPi();
       const ctx = mockCtx();
       const applyAgentRoutes = vi.fn(async () => {});
-      const mgr = new (ProfileManager as any)(pi, ctx, applyAgentRoutes);
-      mgr.setConfig(config({
-        a: { agents: { reviewer: { effort: "low" } } },
-        b: { agents: { writer: { model: { provider: "openai", id: "gpt-4" } } } },
-      }));
+      const mgr = new ProfileManager(pi, ctx, applyAgentRoutes);
+      mgr.setConfig(
+        config({
+          selected: { agents: { reviewer: { effort: "low" } } },
+          other: {
+            agents: {
+              Writer: { model: { provider: "openai", id: "gpt-4" } },
+            },
+          },
+        }),
+      );
 
-      await mgr.use("a");
-      await mgr.next();
+      await mgr.use("selected");
 
-      expect(applyAgentRoutes).toHaveBeenNthCalledWith(
+      expect(applyAgentRoutes).toHaveBeenCalledWith({
+        routes: { reviewer: { effort: "low" } },
+        ownedAgentNames: new Set(["reviewer", "writer"]),
+      });
+      expect(applyAgentRoutes).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps durable ownership when the active snapshot is incomplete", async () => {
+      const pi = mockPi();
+      const ctx = mockCtx();
+      const applyAgentRoutes = vi.fn(async () => {});
+      const mgr = new ProfileManager(pi, ctx, applyAgentRoutes);
+      mgr.setConfig(
+        config({
+          first: { agents: { " Reviewer ": { effort: "low" } } },
+          second: { agents: { WRITER: { effort: "high" } } },
+          empty: { agents: {} },
+        }),
+      );
+
+      await mgr.use("first");
+      const requests = applyAgentRoutes.mock.calls as unknown as [
+        [AgentSyncRequest],
+        [AgentSyncRequest],
+      ];
+      const firstRequest = requests[0][0];
+      await mgr.use("empty");
+      const secondRequest = requests[1][0];
+
+      expect(firstRequest).toEqual({
+        routes: { " Reviewer ": { effort: "low" } },
+        ownedAgentNames: new Set(["reviewer", "writer"]),
+      });
+      expect(secondRequest).toEqual({
+        routes: {},
+        ownedAgentNames: new Set(["reviewer", "writer"]),
+      });
+      expect(secondRequest.ownedAgentNames).not.toBe(
+        firstRequest.ownedAgentNames,
+      );
+      expect(applyAgentRoutes.mock.calls.map((call) => call.length)).toEqual([
         1,
-        { reviewer: { effort: "low" } },
-        [],
-      );
-      expect(applyAgentRoutes).toHaveBeenNthCalledWith(
-        2,
-        { writer: { model: { provider: "openai", id: "gpt-4" } } },
-        ["reviewer"],
-      );
+        1,
+      ]);
+    });
+
+    it("applies the orchestrator before routes and commits status last", async () => {
+      const events: string[] = [];
+      const pi = mockPi({
+        setThinkingLevel: vi.fn(() => events.push("orchestrator")),
+      });
+      const ctx = mockCtx();
+      ctx.ui.setStatus = vi.fn(() => events.push("status"));
+      const applyAgentRoutes = vi.fn(async () => {
+        events.push("agents");
+      });
+      const mgr = new ProfileManager(pi, ctx, applyAgentRoutes);
+      mgr.setConfig(config({ selected: { orchestrator: { effort: "high" } } }));
+
+      await mgr.use("selected");
+
+      expect(events).toEqual(["orchestrator", "agents", "status"]);
     });
 
         it("does not fall back to the orchestrator route for unmanaged agents", async () => {
@@ -186,12 +248,13 @@ describe("ProfileManager", () => {
           );
         });
 
-    it("rolls back on model failure", async () => {
+    it("rolls back on model failure before synchronizing agents", async () => {
       const pi = mockPi({
         setModel: vi.fn(async () => false),
       });
       const ctx = mockCtx({ provider: "openai", id: "gpt-4" });
-      const mgr = new ProfileManager(pi, ctx);
+      const applyAgentRoutes = vi.fn(async () => {});
+      const mgr = new ProfileManager(pi, ctx, applyAgentRoutes);
       mgr.setConfig(
         config({
           fail: {
@@ -204,8 +267,46 @@ describe("ProfileManager", () => {
       );
 
       await expect(mgr.use("fail")).rejects.toThrow();
-      // Baseline should have been restored
+      expect(applyAgentRoutes).not.toHaveBeenCalled();
       expect(pi.setModel).toHaveBeenCalledTimes(2);
+      expect(mgr.state.get("session-1")).toBeUndefined();
+      expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+    });
+
+    it("rethrows concrete thinking-level failures before synchronizing agents", async () => {
+      const error = new Error("thinking level unavailable");
+      const pi = mockPi({
+        setThinkingLevel: vi.fn(() => {
+          throw error;
+        }),
+      });
+      const ctx = mockCtx();
+      const applyAgentRoutes = vi.fn(async () => {});
+      const mgr = new ProfileManager(pi, ctx, applyAgentRoutes);
+      mgr.setConfig(config({ fail: { orchestrator: { effort: "high" } } }));
+
+      await expect(mgr.use("fail")).rejects.toBe(error);
+      expect(applyAgentRoutes).not.toHaveBeenCalled();
+      expect(pi.setThinkingLevel).toHaveBeenCalledTimes(2);
+      expect(mgr.state.get("session-1")).toBeUndefined();
+      expect(ctx.ui.setStatus).not.toHaveBeenCalled();
+    });
+
+    it("rolls back and leaves state uncommitted when agent synchronization fails", async () => {
+      const error = new Error("agent synchronization failed");
+      const pi = mockPi();
+      const ctx = mockCtx();
+      const applyAgentRoutes = vi.fn(async () => {
+        throw error;
+      });
+      const mgr = new ProfileManager(pi, ctx, applyAgentRoutes);
+      mgr.setConfig(config({ fail: { orchestrator: { effort: "high" } } }));
+
+      await expect(mgr.use("fail")).rejects.toBe(error);
+      expect(pi.setThinkingLevel).toHaveBeenNthCalledWith(1, "high");
+      expect(pi.setThinkingLevel).toHaveBeenNthCalledWith(2, "medium");
+      expect(mgr.state.get("session-1")).toBeUndefined();
+      expect(ctx.ui.setStatus).not.toHaveBeenCalled();
     });
   });
 
