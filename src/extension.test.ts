@@ -740,7 +740,17 @@ describe("package extension", () => {
         0,
       ]);
       expect(tuiState.texts).toContainEqual([
-        "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
+        "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInBy".padEnd(80, " "),
+        1,
+        0,
+      ]);
+      expect(tuiState.texts).toContainEqual([
+        "b2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpm".padEnd(80, " "),
+        1,
+        0,
+      ]);
+      expect(tuiState.texts).toContainEqual([
+        "YWxzZX19".padEnd(80, " "),
         1,
         0,
       ]);
@@ -826,7 +836,17 @@ describe("package extension", () => {
       0,
     ]);
     expect(tuiState.texts).toContainEqual([
-      "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInByb2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpmYWxzZX19",
+      "piprofile:1:eyJfdHlwZSI6InBpcHJvZmlsZSIsInZlcnNpb24iOjEsInBy".padEnd(80, " "),
+      1,
+      0,
+    ]);
+    expect(tuiState.texts).toContainEqual([
+      "b2ZpbGUiOnsibmFtZSI6ImFscGhhIiwib3JkZXIiOjAsImZhdm9yaXRlIjpm".padEnd(80, " "),
+      1,
+      0,
+    ]);
+    expect(tuiState.texts).toContainEqual([
+      "YWxzZX19".padEnd(80, " "),
       1,
       0,
     ]);
@@ -884,6 +904,48 @@ describe("package extension", () => {
       agents: { reviewer: { effort: "low" } },
     });
     expect(vi.mocked(fs.writeFile).mock.calls[0]![0]).toBe("/tmp/mock-agent/pi-profiles/config.json");
+  });
+
+  it("imports typed profile strings with spaces and newlines injected", async () => {
+    const fs = await import("node:fs/promises");
+    const pi = mockPi();
+    extension(pi);
+    const handler = (vi.mocked(pi.registerCommand).mock.calls as any[]).find(
+      ([name]: [string]) => name === "profiles",
+    )[1].handler as (args: string, ctx: any) => Promise<void>;
+    vi.mocked(fs.writeFile).mockClear();
+    const payloadOriginal = Buffer.from(JSON.stringify({
+      _type: "piprofile",
+      version: 1,
+      profile: {
+        name: "gamma",
+        favorite: true,
+        order: 9,
+        orchestrator: { model: { provider: "openai", id: "gpt-4" }, effort: "high" },
+      },
+    })).toString("base64");
+    
+    // Inject some spaces and newlines to trigger stripping logic
+    const payload = `piprofile: 1 :\n ${payloadOriginal.slice(0, 10)} \n ${payloadOriginal.slice(10)}  `;
+
+    const ctx = {
+      sessionManager: { getSessionId: () => "session-1" },
+      modelRegistry: { find: vi.fn() },
+      ui: {
+        custom: vi.fn().mockResolvedValueOnce("__IMPORT__").mockResolvedValueOnce(payload).mockResolvedValueOnce(null),
+        notify: vi.fn(),
+        setStatus: vi.fn(),
+      },
+    };
+
+    await handler("", ctx);
+
+    const saved = JSON.parse(vi.mocked(fs.writeFile).mock.calls[0]![1] as string);
+    expect(saved.defaultProfile).toBe("gamma");
+    expect(saved.profiles.gamma).toMatchObject({
+      order: 1,
+      orchestrator: { model: { provider: "openai", id: "gpt-4" }, effort: "high" },
+    });
   });
 
   it("reports malformed profile imports as user-facing validation errors", async () => {
