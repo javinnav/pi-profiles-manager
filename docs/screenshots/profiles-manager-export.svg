@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="560" viewBox="0 0 960 560" role="img" aria-labelledby="title desc">
+  <title id="title">PiProfiles profile export</title>
+  <desc id="desc">A terminal-style rendering of the captured PiProfiles export confirmation TUI.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#111a33"/>
+      <stop offset="1" stop-color="#090d19"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity=".42"/>
+    </filter>
+  </defs>
+  <rect width="960" height="560" fill="#070a12"/>
+  <rect x="32" y="28" width="896" height="504" rx="14" fill="url(#bg)" stroke="#334160" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="32" y="28" width="896" height="48" rx="14" fill="#18223d"/>
+  <rect x="32" y="62" width="896" height="14" fill="#18223d"/>
+  <circle cx="62" cy="52" r="7" fill="#ff6b7a"/>
+  <circle cx="86" cy="52" r="7" fill="#ffc857"/>
+  <circle cx="110" cy="52" r="7" fill="#5de4a8"/>
+  <text x="480" y="57" text-anchor="middle" fill="#a9b7d4" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16">pi · Profiles Manager</text>
+  <rect x="180" y="170" width="600" height="220" rx="10" fill="#0d1426" stroke="#4e709e" stroke-width="2"/>
+  <rect x="180" y="170" width="600" height="9" rx="4" fill="#8df0c0"/>
+  <text x="480" y="235" text-anchor="middle" fill="#8df0c0" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="24" font-weight="700">📤 Profile Export: 'Balanced'</text>
+  <text x="480" y="294" text-anchor="middle" fill="#e6edf8" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="18">✓ Copy command sent to terminal clipboard.</text>
+  <text x="480" y="347" text-anchor="middle" fill="#91a2c3" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="16">[ Press any key or Esc to close ]</text>
+  <text x="105" y="478" fill="#7082a5" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="13">PiProfiles · captured Pi TUI</text>
+</svg>
